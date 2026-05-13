@@ -59,9 +59,26 @@ return [
             'prefix_indexes' => true,
             'strict' => true,
             'engine' => null,
-            'options' => extension_loaded('pdo_mysql') ? array_filter([
-                (PHP_VERSION_ID >= 80500 ? Mysql::ATTR_SSL_CA : PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
-            ]) : [],
+            'options' => extension_loaded('pdo_mysql') ? (function (): array {
+                $options = [];
+                $sslCa = env('MYSQL_ATTR_SSL_CA');
+
+                if ($sslCa) {
+                    if (! str_starts_with($sslCa, '/') && ! preg_match('/^[A-Za-z]:[\\\\\\/]/', $sslCa)) {
+                        $sslCa = base_path($sslCa);
+                    }
+                    $options[(PHP_VERSION_ID >= 80500 ? Mysql::ATTR_SSL_CA : PDO::MYSQL_ATTR_SSL_CA)] = $sslCa;
+                }
+
+                if (defined('PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT')) {
+                    $options[PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = filter_var(
+                        env('MYSQL_ATTR_SSL_VERIFY_SERVER_CERT', true),
+                        FILTER_VALIDATE_BOOL
+                    );
+                }
+
+                return $options;
+            })() : [],
         ],
 
         'mariadb' => [

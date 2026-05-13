@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: pablottermo-backend
+    env: php
+    rootDir: backend
+    buildCommand: composer install --no-dev --optimize-autoloader
+    startCommand: php artisan serve --host=0.0.0.0 --port=$PORT
+    healthCheckPath: /api/complaints/stats
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: LOG_CHANNEL
+        value: stack
+
+  - type: web
+    name: pablottermo-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
+    staticPublishPath: dist
