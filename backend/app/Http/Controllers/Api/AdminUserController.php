@@ -83,6 +83,28 @@ class AdminUserController extends Controller
         ]);
     }
 
+    public function destroy(User $user): JsonResponse
+    {
+        if ($user->role !== 'admin') {
+            return response()->json([
+                'message' => 'Only admin users can be deleted from this endpoint.',
+            ], 422);
+        }
+
+        $adminCount = User::query()->where('role', 'admin')->count();
+        if ($adminCount <= 1) {
+            return response()->json([
+                'message' => 'Cannot delete the last admin account.',
+            ], 422);
+        }
+
+        $user->delete();
+
+        return response()->json([
+            'message' => 'Admin account deleted successfully.',
+        ]);
+    }
+
     private function transformAdminUser(User $user): array
     {
         return [

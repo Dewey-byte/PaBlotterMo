@@ -59,7 +59,8 @@ class ComplaintController extends Controller
             'contactValue' => ['required', 'string', 'max:255'],
             'category' => ['required', Rule::in($this->allowedCategories())],
             'description' => ['required', 'string'],
-            'evidence' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
+            'evidence' => ['nullable', 'array', 'max:5'],
+            'evidence.*' => ['file', 'mimes:jpg,jpeg,jfif,png,webp,heic,heif,pdf,mp4,mov,m4v,webm,ogg,3gp', 'max:51200'],
         ]);
 
         $this->validateContactValue($validated['contactMethod'], $validated['contactValue']);
@@ -72,10 +73,14 @@ class ComplaintController extends Controller
             ], 429);
         }
 
-        $evidencePath = null;
+        $evidencePaths = [];
         if ($request->hasFile('evidence')) {
-            $storedPath = $request->file('evidence')->store('complaints', 'public');
-            $evidencePath = Storage::url($storedPath);
+            /** @var array<int, \Illuminate\Http\UploadedFile> $files */
+            $files = $request->file('evidence');
+            foreach ($files as $file) {
+                $storedPath = $file->store('complaints', 'public');
+                $evidencePaths[] = Storage::url($storedPath);
+            }
         }
 
         $complaint = Complaint::query()->create([
@@ -88,7 +93,8 @@ class ComplaintController extends Controller
             'description' => $validated['description'],
             'status' => Complaint::STATUS_PENDING,
             'date_submitted' => now(),
-            'evidence_path' => $evidencePath,
+            'evidence_path' => $evidencePaths[0] ?? null,
+            'evidence_paths' => $evidencePaths ?: null,
         ]);
 
         return response()->json([
@@ -102,17 +108,20 @@ class ComplaintController extends Controller
         return response()->json($this->transformComplaint($complaint));
     }
 
-    public function evidence(Complaint $complaint): BinaryFileResponse|JsonResponse
+    public function evidence(Complaint $complaint, int $index = 0): BinaryFileResponse|JsonResponse
     {
-        if (! $complaint->evidence_path) {
+        $paths = $this->complaintEvidencePaths($complaint);
+        $selectedPath = $paths[$index] ?? null;
+
+        if (! $selectedPath) {
             return response()->json([
                 'message' => 'No evidence file found for this complaint.',
             ], 404);
         }
 
-        $relativePath = Str::startsWith($complaint->evidence_path, '/storage/')
-            ? Str::after($complaint->evidence_path, '/storage/')
-            : ltrim($complaint->evidence_path, '/');
+        $relativePath = Str::startsWith($selectedPath, '/storage/')
+            ? Str::after($selectedPath, '/storage/')
+            : ltrim($selectedPath, '/');
 
         if (! Storage::disk('public')->exists($relativePath)) {
             return response()->json([
@@ -180,10 +189,10 @@ class ComplaintController extends Controller
 
     public function destroy(Complaint $complaint): JsonResponse
     {
-        if ($complaint->evidence_path) {
-            $relativePath = Str::startsWith($complaint->evidence_path, '/storage/')
-                ? Str::after($complaint->evidence_path, '/storage/')
-                : ltrim($complaint->evidence_path, '/');
+        foreach ($this->complaintEvidencePaths($complaint) as $path) {
+            $relativePath = Str::startsWith($path, '/storage/')
+                ? Str::after($path, '/storage/')
+                : ltrim($path, '/');
 
             if (Storage::disk('public')->exists($relativePath)) {
                 Storage::disk('public')->delete($relativePath);
@@ -209,6 +218,12 @@ class ComplaintController extends Controller
 
     private function transformComplaint(Complaint $complaint): array
     {
+        $evidencePaths = $this->complaintEvidencePaths($complaint);
+        $evidenceUrls = collect($evidencePaths)
+            ->values()
+            ->map(fn (string $value, int $index): string => url("/api/complaints/{$complaint->id}/evidence/{$index}"))
+            ->all();
+
         return [
             'id' => $complaint->id,
             'trackingNumber' => $complaint->tracking_number,
@@ -220,8 +235,10 @@ class ComplaintController extends Controller
             'description' => $complaint->description,
             'status' => $complaint->status,
             'dateSubmitted' => optional($complaint->date_submitted)->toDateString(),
-            'evidencePath' => $complaint->evidence_path,
-            'evidenceUrl' => $complaint->evidence_path ? url("/api/complaints/{$complaint->id}/evidence") : null,
+            'evidencePath' => $evidencePaths[0] ?? null,
+            'evidenceUrl' => $evidenceUrls[0] ?? null,
+            'evidencePaths' => $evidencePaths,
+            'evidenceUrls' => $evidenceUrls,
             'assignedOfficer' => $complaint->assigned_officer,
             'adminNotes' => $complaint->admin_notes,
             'createdAt' => optional($complaint->created_at)->toISOString(),
@@ -323,7 +340,20 @@ class ComplaintController extends Controller
             ];
         }
 
-        $message = "Update for complaint {$complaint->tracking_number}: status changed from {$previousStatus} to {$complaint->status}.";
+        $message = implode("\n", [
+            'Dear Concerned Resident,',
+            '',
+            "This is to inform you that the status of your complaint ({$complaint->tracking_number}) has been updated.",
+            "Previous status: {$previousStatus}",
+            "Current status: {$complaint->status}",
+            '',
+            $complaint->admin_notes
+                ? "Administrative notes: {$complaint->admin_notes}"
+                : 'No additional notes were provided at this time.',
+            '',
+            'Thank you for your patience and cooperation.',
+            'Barangay Complaint Management Team',
+        ]);
 
         return match ($contactMethod) {
             Complaint::CONTACT_METHOD_EMAIL => $this->sendStatusUpdateEmail($contactValue, $message, $complaint),
@@ -359,7 +389,7 @@ class ComplaintController extends Controller
             Mail::raw($message, function ($mail) use ($emailAddress, $complaint): void {
                 $mail
                     ->to($emailAddress)
-                    ->subject("PaBlotterMo Complaint Update ({$complaint->tracking_number})");
+                    ->subject("Official Complaint Status Update - {$complaint->tracking_number}");
             });
 
             return [
@@ -464,5 +494,18 @@ class ComplaintController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function complaintEvidencePaths(Complaint $complaint): array
+    {
+        $paths = $complaint->evidence_paths;
+        if (is_array($paths) && count($paths) > 0) {
+            return array_values(array_filter(array_map('strval', $paths)));
+        }
+
+        return $complaint->evidence_path ? [$complaint->evidence_path] : [];
     }
 }

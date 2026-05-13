@@ -13,9 +13,9 @@
   <div v-else class="min-h-screen bg-slate-50">
     <header class="bg-white/90 backdrop-blur shadow-sm border-b border-slate-200">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-        <button @click="router.push('/admin')" class="flex items-center space-x-2 text-gray-700 hover:text-[#1E3A8A] transition">
+        <button @click="router.push({ path: '/admin', query: { tab: 'complaints' } })" class="flex items-center space-x-2 text-gray-700 hover:text-[#1E3A8A] transition">
           <ArrowLeft class="w-5 h-5" />
-          <span>Back to Admin Dashboard</span>
+          <span>Back to Complaints</span>
         </button>
       </div>
     </header>
@@ -76,27 +76,36 @@
                 </div>
               </div>
 
-              <div v-if="complaint.evidencePath">
+              <div v-if="availableEvidencePaths.length > 0">
                 <label class="flex items-center space-x-2 text-sm font-medium text-gray-600 mb-2">
                   <ImageIcon class="w-4 h-4" />
-                  <span>Resident Evidence</span>
+                  <span>Resident Evidence ({{ availableEvidencePaths.length }})</span>
                 </label>
-                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                  <img
-                    v-if="isImageEvidence(complaint.evidencePath)"
-                    :src="resolveEvidenceUrl(complaint)"
-                    alt="Resident evidence"
-                    class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white"
-                  />
-                  <a
-                    v-else
-                    :href="resolveEvidenceUrl(complaint)"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="inline-flex items-center text-[#1E3A8A] hover:underline font-medium"
-                  >
-                    View uploaded file
-                  </a>
+                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 space-y-4">
+                  <div v-for="(evidencePath, index) in availableEvidencePaths" :key="`${evidencePath}-${index}`">
+                    <p class="text-xs text-gray-500 mb-2">Attachment {{ index + 1 }}</p>
+                    <img
+                      v-if="isImageEvidence(evidencePath)"
+                      :src="resolveEvidenceUrl(complaint, index)"
+                      alt="Resident evidence"
+                      class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white"
+                    />
+                    <video
+                      v-else-if="isVideoEvidence(evidencePath)"
+                      :src="resolveEvidenceUrl(complaint, index)"
+                      controls
+                      class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white w-full"
+                    />
+                    <a
+                      v-else
+                      :href="resolveEvidenceUrl(complaint, index)"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="inline-flex items-center text-[#1E3A8A] hover:underline font-medium"
+                    >
+                      View uploaded file
+                    </a>
+                  </div>
                 </div>
               </div>
             </div>
@@ -153,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuth } from "../composables/useAuth";
 import { API_BASE_URL, apiRequest } from "../lib/api";
@@ -182,6 +191,11 @@ const updateSuccess = ref("");
 const notificationMessage = ref("");
 const notificationSent = ref<boolean | null>(null);
 const loadingComplaint = ref(true);
+const availableEvidencePaths = computed(() => {
+  const paths = complaint.value?.evidencePaths ?? [];
+  if (paths.length > 0) return paths;
+  return complaint.value?.evidencePath ? [complaint.value.evidencePath] : [];
+});
 
 const fetchComplaint = async () => {
   const id = route.params.id;
@@ -220,16 +234,31 @@ const toAbsoluteUrl = (value: string) => {
   return `${origin}${value.startsWith("/") ? value : `/${value}`}`;
 };
 
-const resolveEvidenceUrl = (currentComplaint: Complaint) => {
-  if (currentComplaint.evidenceUrl) {
+const resolveEvidenceUrl = (currentComplaint: Complaint, index: number) => {
+  if (currentComplaint.evidenceUrls?.[index]) {
+    return currentComplaint.evidenceUrls[index];
+  }
+
+  if (index === 0 && currentComplaint.evidenceUrl) {
     return currentComplaint.evidenceUrl;
   }
-  return currentComplaint.evidencePath ? toAbsoluteUrl(currentComplaint.evidencePath) : "";
+
+  const evidencePath = currentComplaint.evidencePaths?.[index];
+  if (evidencePath) {
+    return toAbsoluteUrl(evidencePath);
+  }
+
+  return index === 0 && currentComplaint.evidencePath ? toAbsoluteUrl(currentComplaint.evidencePath) : "";
 };
 
 const isImageEvidence = (value: string) => {
   const lower = value.toLowerCase();
-  return [".jpg", ".jpeg", ".png", ".webp", ".gif"].some((ext) => lower.includes(ext));
+  return [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif", ".jfif"].some((ext) => lower.includes(ext));
+};
+
+const isVideoEvidence = (value: string) => {
+  const lower = value.toLowerCase();
+  return [".mp4", ".mov", ".m4v", ".webm", ".ogg", ".3gp"].some((ext) => lower.includes(ext));
 };
 
 const handleUpdate = async () => {

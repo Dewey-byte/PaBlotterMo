@@ -75,6 +75,13 @@
             <p class="text-slate-500 text-sm">Description</p>
             <p class="text-slate-900 mt-1">{{ complaint.description }}</p>
           </div>
+
+          <div v-if="complaint.adminNotes" class="mt-4">
+            <p class="text-slate-500 text-sm">Admin Notes</p>
+            <div class="mt-1 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+              <p class="text-slate-900 text-sm whitespace-pre-line">{{ complaint.adminNotes }}</p>
+            </div>
+          </div>
         </div>
       </div>
     </main>

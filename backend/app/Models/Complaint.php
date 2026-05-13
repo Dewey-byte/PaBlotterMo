@@ -32,11 +32,13 @@ class Complaint extends Model
         'status',
         'date_submitted',
         'evidence_path',
+        'evidence_paths',
         'assigned_officer',
         'admin_notes',
     ];
 
     protected $casts = [
         'date_submitted' => 'datetime',
+        'evidence_paths' => 'array',
     ];
 }

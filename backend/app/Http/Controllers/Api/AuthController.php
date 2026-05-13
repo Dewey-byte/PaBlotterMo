@@ -192,13 +192,23 @@ class AuthController extends Controller
             return 'fallback';
         }
 
-        $message = "Your PaBlotterMo admin OTP is {$otp}. It expires in {$this->otpExpiryMinutes()} minutes.";
+        $message = implode("\n", [
+            'Dear Administrator,',
+            '',
+            "Your one-time password (OTP) for PaBlotterMo password reset is: {$otp}",
+            "This OTP will expire in {$this->otpExpiryMinutes()} minutes.",
+            '',
+            'If you did not request a password reset, please ignore this email.',
+            '',
+            'Sincerely,',
+            'PaBlotterMo System Administration',
+        ]);
 
         try {
             Mail::raw($message, function ($mail) use ($emailAddress): void {
                 $mail
                     ->to($emailAddress)
-                    ->subject('PaBlotterMo Admin Password Reset OTP');
+                    ->subject('Official OTP for Admin Password Reset');
             });
             return 'sent';
         } catch (Throwable $exception) {

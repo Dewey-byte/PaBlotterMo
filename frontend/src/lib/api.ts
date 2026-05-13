@@ -1,4 +1,16 @@
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api";
+const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000/api";
+
+function normalizeApiBaseUrl(value?: string): string {
+  const trimmed = (value ?? DEFAULT_API_BASE_URL).trim();
+  const withoutWrappingQuotes = trimmed.replace(/^['"]|['"]$/g, "");
+  const withProtocol = /^https?:\/\//i.test(withoutWrappingQuotes)
+    ? withoutWrappingQuotes
+    : `https://${withoutWrappingQuotes}`;
+
+  return withProtocol.replace(/\/+$/, "");
+}
+
+export const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 
 interface ApiErrorPayload {
   message?: string;
@@ -7,10 +19,20 @@ interface ApiErrorPayload {
 
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const isMultipart = options.body instanceof FormData;
+  const requestPath = path.startsWith("/") ? path : `/${path}`;
+  const endpoint = `${API_BASE_URL}${requestPath}`;
   let response: Response;
 
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    // Validate URL early to surface config problems clearly.
+    // eslint-disable-next-line no-new
+    new URL(endpoint);
+  } catch {
+    throw new Error(`Invalid API URL. Check VITE_API_BASE_URL value: ${API_BASE_URL}`);
+  }
+
+  try {
+    response = await fetch(endpoint, {
       headers: isMultipart
         ? (options.headers ?? {})
         : {

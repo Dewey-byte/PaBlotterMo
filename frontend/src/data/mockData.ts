@@ -14,6 +14,8 @@ export interface Complaint {
   dateSubmitted: string;
   evidencePath?: string | null;
   evidenceUrl?: string | null;
+  evidencePaths?: string[];
+  evidenceUrls?: string[];
   assignedOfficer?: string;
   adminNotes?: string;
   createdAt?: string;

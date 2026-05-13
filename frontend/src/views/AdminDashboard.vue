@@ -448,15 +448,34 @@
 
           <div class="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
             <h3 class="text-lg font-semibold text-gray-900 mb-4">Existing Admin Users</h3>
+            <div v-if="adminDeleteError" class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+              {{ adminDeleteError }}
+            </div>
+            <div v-if="adminDeleteMessage" class="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
+              {{ adminDeleteMessage }}
+            </div>
             <div v-if="adminUsersLoading" class="text-gray-600 text-sm">Loading admin users...</div>
             <div v-else-if="adminUsersError" class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
               {{ adminUsersError }}
             </div>
             <div v-else class="space-y-2">
-              <div v-for="adminItem in adminUsers" :key="adminItem.id" class="p-3 border border-gray-200 rounded-lg">
-                <p class="font-medium text-gray-900">{{ adminItem.name }}</p>
-                <p class="text-sm text-gray-600">{{ adminItem.email }}</p>
-                <p class="text-xs text-gray-500">{{ adminItem.contactNumber || "No contact number" }}</p>
+              <div v-for="adminItem in adminUsers" :key="adminItem.id" class="p-3 border border-gray-200 rounded-lg flex items-start justify-between gap-3">
+                <div>
+                  <p class="font-medium text-gray-900">
+                    {{ adminItem.name }}
+                    <span v-if="user && adminItem.id === user.id" class="text-xs text-blue-600">(You)</span>
+                  </p>
+                  <p class="text-sm text-gray-600">{{ adminItem.email }}</p>
+                  <p class="text-xs text-gray-500">{{ adminItem.contactNumber || "No contact number" }}</p>
+                </div>
+                <button
+                  @click="deleteAdminUser(adminItem)"
+                  :disabled="deletingAdminId === adminItem.id || (user ? adminItem.id === user.id : false)"
+                  class="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Trash2 class="w-3.5 h-3.5" />
+                  {{ deletingAdminId === adminItem.id ? "Deleting..." : "Delete" }}
+                </button>
               </div>
             </div>
           </div>
@@ -476,7 +495,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useAuth } from "../composables/useAuth";
 import { API_BASE_URL, apiRequest } from "../lib/api";
 import type { Complaint, ComplaintCategory, ComplaintStats, ComplaintStatus } from "../data/mockData";
@@ -500,6 +519,7 @@ import {
 } from "lucide-vue-next";
 
 const router = useRouter();
+const route = useRoute();
 const { user, logout, setUser } = useAuth();
 
 const activeTab = ref("dashboard");
@@ -523,6 +543,9 @@ const adminUsersError = ref("");
 const adminCreateLoading = ref(false);
 const adminCreateMessage = ref("");
 const adminCreateError = ref("");
+const adminDeleteMessage = ref("");
+const adminDeleteError = ref("");
+const deletingAdminId = ref<number | null>(null);
 const deletingComplaintId = ref<number | null>(null);
 const showAccountNewPassword = ref(false);
 const showAccountConfirmPassword = ref(false);
@@ -599,6 +622,10 @@ onMounted(() => {
   if (!user.value || user.value.role !== "admin") {
     router.push("/admin/login");
     return;
+  }
+  const tab = route.query.tab;
+  if (typeof tab === "string" && menuItems.some((item) => item.id === tab)) {
+    activeTab.value = tab;
   }
   initializeAccountForm();
   void fetchDashboardData();
@@ -818,6 +845,34 @@ const createAdminUser = async () => {
     adminCreateError.value = err instanceof Error ? err.message : "Failed to create admin user.";
   } finally {
     adminCreateLoading.value = false;
+  }
+};
+
+const deleteAdminUser = async (adminUser: AdminUser) => {
+  if (!user.value || deletingAdminId.value !== null) return;
+
+  adminDeleteMessage.value = "";
+  adminDeleteError.value = "";
+
+  if (adminUser.id === user.value.id) {
+    adminDeleteError.value = "You cannot delete your own active admin account.";
+    return;
+  }
+
+  const confirmed = window.confirm(`Delete admin account "${adminUser.name}"?`);
+  if (!confirmed) return;
+
+  deletingAdminId.value = adminUser.id;
+  try {
+    const response = await apiRequest<{ message: string }>(`/admin/users/${adminUser.id}`, {
+      method: "DELETE",
+    });
+    adminUsers.value = adminUsers.value.filter((entry) => entry.id !== adminUser.id);
+    adminDeleteMessage.value = response.message;
+  } catch (err) {
+    adminDeleteError.value = err instanceof Error ? err.message : "Failed to delete admin account.";
+  } finally {
+    deletingAdminId.value = null;
   }
 };
 
