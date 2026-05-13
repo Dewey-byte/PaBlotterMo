@@ -221,7 +221,7 @@ class ComplaintController extends Controller
         $evidencePaths = $this->complaintEvidencePaths($complaint);
         $evidenceUrls = collect($evidencePaths)
             ->values()
-            ->map(fn (string $value, int $index): string => url("/api/complaints/{$complaint->id}/evidence/{$index}"))
+            ->map(fn (string $value, int $index): string => secure_url("/api/complaints/{$complaint->id}/evidence/{$index}"))
             ->all();
 
         return [
@@ -403,9 +403,12 @@ class ComplaintController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
+            $providerMessage = trim($exception->getMessage());
+            $providerMessage = $providerMessage !== '' ? " Provider said: {$providerMessage}" : '';
+
             return [
                 'sent' => false,
-                'reason' => 'Email provider rejected the message.',
+                'reason' => "Email provider rejected the message.{$providerMessage}",
             ];
         }
     }
