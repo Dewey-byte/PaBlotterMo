@@ -54,12 +54,12 @@
 
           <div class="grid sm:grid-cols-2 gap-4 text-sm">
             <div>
-              <p class="text-slate-500">Resident Name</p>
-              <p class="font-medium text-slate-900">{{ complaint.residentName }}</p>
+              <p class="text-slate-500">Complainant</p>
+              <p class="font-medium text-slate-900">{{ complaint.residentName || "Anonymous" }}</p>
             </div>
             <div>
-              <p class="text-slate-500">Contact Number</p>
-              <p class="font-medium text-slate-900">{{ complaint.contactNumber }}</p>
+              <p class="text-slate-500">{{ complaint.contactMethod === "email" ? "Email Address" : "Phone Number" }}</p>
+              <p class="font-medium text-slate-900">{{ complaint.contactValue || complaint.contactNumber }}</p>
             </div>
             <div>
               <p class="text-slate-500">Category</p>

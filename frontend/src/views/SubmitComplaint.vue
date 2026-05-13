@@ -43,7 +43,6 @@
           <ArrowLeft class="w-5 h-5" />
           <span>Back to Home</span>
         </button>
-        <RouterLink to="/admin/login" class="text-sm text-[#1E3A8A] hover:underline font-medium">Admin Login</RouterLink>
       </div>
     </header>
 
@@ -55,35 +54,77 @@
         </div>
 
         <form @submit.prevent="handleSubmit" class="px-6 sm:px-8 py-8 space-y-6">
+          <div class="bg-blue-50 border border-blue-200 text-blue-900 px-4 py-3 rounded-lg">
+            <p class="text-sm font-semibold">Your privacy is protected.</p>
+            <p class="text-sm mt-1">
+              Complaints are recorded anonymously. Your contact details are only used for updates on your case.
+            </p>
+          </div>
+
           <div v-if="submitError" class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
             {{ submitError }}
           </div>
 
           <div>
-            <label for="fullName" class="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
-            <div class="relative">
-              <User class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                id="fullName"
-                v-model="formData.fullName"
-                type="text"
-                class="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1E3A8A] focus:border-transparent outline-none transition"
-                placeholder="Enter your full name"
-                required
-              />
+            <label class="block text-sm font-medium text-gray-700 mb-2">Preferred Contact Method</label>
+            <div class="grid sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                @click="setContactMethod('phone')"
+                :disabled="!isPhoneContactAvailable"
+                :class="[
+                  'px-4 py-3 rounded-lg border text-left transition disabled:cursor-not-allowed',
+                  formData.contactMethod === 'phone'
+                    ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+                  !isPhoneContactAvailable ? 'opacity-50' : '',
+                ]"
+              >
+                <span class="inline-flex items-center gap-2 font-medium">
+                  <Phone class="w-4 h-4" />
+                  {{ isPhoneContactAvailable ? "Phone Number" : "Phone Number (Unavailable)" }}
+                </span>
+              </button>
+              <button
+                type="button"
+                @click="setContactMethod('email')"
+                :class="[
+                  'px-4 py-3 rounded-lg border text-left transition',
+                  formData.contactMethod === 'email'
+                    ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+                ]"
+              >
+                <span class="inline-flex items-center gap-2 font-medium">
+                  <Mail class="w-4 h-4" />
+                  Email Address
+                </span>
+              </button>
             </div>
+            <p v-if="!isPhoneContactAvailable" class="mt-2 text-xs text-amber-700">
+              Phone updates are temporarily unavailable. Please use email for complaint updates.
+            </p>
           </div>
 
           <div>
-            <label for="contactNumber" class="block text-sm font-medium text-gray-700 mb-2">Contact Number</label>
+            <label for="contactValue" class="block text-sm font-medium text-gray-700 mb-2">
+              {{ formData.contactMethod === "phone" ? "Phone Number" : "Email Address" }}
+            </label>
             <div class="relative">
-              <Phone class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Phone
+                v-if="formData.contactMethod === 'phone'"
+                class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
+              />
+              <Mail
+                v-else
+                class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
+              />
               <input
-                id="contactNumber"
-                v-model="formData.contactNumber"
-                type="tel"
+                id="contactValue"
+                v-model="formData.contactValue"
+                :type="formData.contactMethod === 'phone' ? 'tel' : 'email'"
                 class="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1E3A8A] focus:border-transparent outline-none transition"
-                placeholder="09XX-XXX-XXXX"
+                :placeholder="formData.contactMethod === 'phone' ? '09XX-XXX-XXXX' : 'your.email@example.com'"
                 required
               />
             </div>
@@ -131,6 +172,14 @@
                 Choose File
               </label>
             </div>
+            <div v-if="imagePreviewUrl" class="mt-4">
+              <p class="text-sm font-medium text-gray-700 mb-2">Image Preview</p>
+              <img
+                :src="imagePreviewUrl"
+                alt="Selected evidence preview"
+                class="max-h-56 rounded-lg border border-gray-200 object-contain bg-white"
+              />
+            </div>
           </div>
 
           <div class="pt-4">
@@ -149,28 +198,32 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from "vue";
-import { useRouter, RouterLink } from "vue-router";
+import { onBeforeUnmount, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import type { ComplaintCategory } from "../data/mockData";
-import { Upload, FileText, User, Phone, Tag, ArrowLeft, Check } from "lucide-vue-next";
+import { Upload, FileText, Phone, Mail, Tag, ArrowLeft, Check } from "lucide-vue-next";
 import { apiRequest } from "../lib/api";
 
 const router = useRouter();
 const categories: ComplaintCategory[] = ["Noise", "Theft", "Domestic", "Property", "Others"];
+const isPhoneContactAvailable =
+  String((import.meta as { env?: Record<string, unknown> }).env?.VITE_PHONE_CONTACT_AVAILABLE ?? "false").toLowerCase() === "true";
 
 const formData = reactive<{
-  fullName: string;
-  contactNumber: string;
+  contactMethod: "phone" | "email";
+  contactValue: string;
   category: ComplaintCategory | "";
   description: string;
 }>({
-  fullName: "",
-  contactNumber: "",
+  contactMethod: isPhoneContactAvailable ? "phone" : "email",
+  contactValue: "",
   category: "",
   description: "",
 });
 
 const fileName = ref("");
+const selectedFile = ref<File | null>(null);
+const imagePreviewUrl = ref("");
 const submitted = ref(false);
 const trackingNumber = ref("");
 const submitError = ref("");
@@ -185,19 +238,27 @@ interface CreateComplaintResponse {
 
 const handleSubmit = async () => {
   if (isSubmitting.value) return;
+  if (!isPhoneContactAvailable && formData.contactMethod === "phone") {
+    submitError.value = "Phone contact is currently unavailable. Please use email instead.";
+    return;
+  }
 
   isSubmitting.value = true;
   submitError.value = "";
 
   try {
+    const payload = new FormData();
+    payload.append("contactMethod", formData.contactMethod);
+    payload.append("contactValue", formData.contactValue);
+    payload.append("category", formData.category);
+    payload.append("description", formData.description);
+    if (selectedFile.value) {
+      payload.append("evidence", selectedFile.value);
+    }
+
     const response = await apiRequest<CreateComplaintResponse>("/complaints", {
       method: "POST",
-      body: JSON.stringify({
-        fullName: formData.fullName,
-        contactNumber: formData.contactNumber,
-        category: formData.category,
-        description: formData.description,
-      }),
+      body: payload,
     });
     trackingNumber.value = response.complaint.trackingNumber;
     submitted.value = true;
@@ -211,12 +272,21 @@ const handleSubmit = async () => {
 const handleNewComplaint = () => {
   submitted.value = false;
   submitError.value = "";
-  formData.fullName = "";
-  formData.contactNumber = "";
+  formData.contactMethod = isPhoneContactAvailable ? "phone" : "email";
+  formData.contactValue = "";
   formData.category = "";
   formData.description = "";
   fileName.value = "";
+  selectedFile.value = null;
+  clearImagePreview();
   trackingNumber.value = "";
+};
+
+const setContactMethod = (method: "phone" | "email") => {
+  if (method === "phone" && !isPhoneContactAvailable) {
+    return;
+  }
+  formData.contactMethod = method;
 };
 
 const handleFileChange = (event: Event) => {
@@ -224,6 +294,28 @@ const handleFileChange = (event: Event) => {
   const file = target.files?.[0];
   if (file) {
     fileName.value = file.name;
+    selectedFile.value = file;
+    if (file.type.startsWith("image/")) {
+      clearImagePreview();
+      imagePreviewUrl.value = URL.createObjectURL(file);
+    } else {
+      clearImagePreview();
+    }
+    return;
+  }
+  fileName.value = "";
+  selectedFile.value = null;
+  clearImagePreview();
+};
+
+const clearImagePreview = () => {
+  if (imagePreviewUrl.value) {
+    URL.revokeObjectURL(imagePreviewUrl.value);
+    imagePreviewUrl.value = "";
   }
 };
+
+onBeforeUnmount(() => {
+  clearImagePreview();
+});
 </script>

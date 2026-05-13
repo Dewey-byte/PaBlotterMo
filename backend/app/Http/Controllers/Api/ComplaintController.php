@@ -4,9 +4,18 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Complaint;
+use Carbon\Carbon;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Throwable;
 
 class ComplaintController extends Controller
 {
@@ -46,22 +55,40 @@ class ComplaintController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'fullName' => ['required', 'string', 'max:255'],
-            'contactNumber' => ['required', 'string', 'max:30'],
+            'contactMethod' => ['required', Rule::in($this->allowedContactMethods())],
+            'contactValue' => ['required', 'string', 'max:255'],
             'category' => ['required', Rule::in($this->allowedCategories())],
             'description' => ['required', 'string'],
-            'evidencePath' => ['nullable', 'string', 'max:255'],
+            'evidence' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
         ]);
+
+        $this->validateContactValue($validated['contactMethod'], $validated['contactValue']);
+
+        if ($this->isSubmissionLimitReached($validated['contactMethod'], $validated['contactValue'])) {
+            $limit = $this->dailySubmissionLimit();
+
+            return response()->json([
+                'message' => "Submission limit reached. You can only submit {$limit} complaint(s) per day using the same contact.",
+            ], 429);
+        }
+
+        $evidencePath = null;
+        if ($request->hasFile('evidence')) {
+            $storedPath = $request->file('evidence')->store('complaints', 'public');
+            $evidencePath = Storage::url($storedPath);
+        }
 
         $complaint = Complaint::query()->create([
             'tracking_number' => $this->generateTrackingNumber(),
-            'resident_name' => $validated['fullName'],
-            'contact_number' => $validated['contactNumber'],
+            'resident_name' => 'Anonymous',
+            'contact_number' => $validated['contactValue'],
+            'contact_method' => $validated['contactMethod'],
+            'contact_value' => $validated['contactValue'],
             'category' => $validated['category'],
             'description' => $validated['description'],
             'status' => Complaint::STATUS_PENDING,
             'date_submitted' => now(),
-            'evidence_path' => $validated['evidencePath'] ?? null,
+            'evidence_path' => $evidencePath,
         ]);
 
         return response()->json([
@@ -73,6 +100,27 @@ class ComplaintController extends Controller
     public function show(Complaint $complaint): JsonResponse
     {
         return response()->json($this->transformComplaint($complaint));
+    }
+
+    public function evidence(Complaint $complaint): BinaryFileResponse|JsonResponse
+    {
+        if (! $complaint->evidence_path) {
+            return response()->json([
+                'message' => 'No evidence file found for this complaint.',
+            ], 404);
+        }
+
+        $relativePath = Str::startsWith($complaint->evidence_path, '/storage/')
+            ? Str::after($complaint->evidence_path, '/storage/')
+            : ltrim($complaint->evidence_path, '/');
+
+        if (! Storage::disk('public')->exists($relativePath)) {
+            return response()->json([
+                'message' => 'Evidence file does not exist on disk.',
+            ], 404);
+        }
+
+        return response()->file(Storage::disk('public')->path($relativePath));
     }
 
     public function track(string $trackingNumber): JsonResponse
@@ -98,6 +146,8 @@ class ComplaintController extends Controller
             'assignedOfficer' => ['sometimes', 'nullable', 'string', 'max:255'],
         ]);
 
+        $originalStatus = $complaint->status;
+
         $complaint->fill([
             'status' => $validated['status'] ?? $complaint->status,
             'admin_notes' => array_key_exists('adminNotes', $validated) ? $validated['adminNotes'] : $complaint->admin_notes,
@@ -105,9 +155,45 @@ class ComplaintController extends Controller
         ]);
         $complaint->save();
 
+        $statusChanged = $originalStatus !== $complaint->status;
+        $notificationSent = true;
+        $notificationReason = null;
+
+        if ($statusChanged) {
+            $notificationResult = $this->notifyComplainantStatusUpdate($complaint, $originalStatus);
+            $notificationSent = $notificationResult['sent'];
+            $notificationReason = $notificationResult['reason'];
+        }
+
+        $message = 'Complaint updated successfully.';
+        if ($statusChanged && ! $notificationSent) {
+            $message .= ' Status was updated, but notification could not be sent.';
+        }
+
         return response()->json([
-            'message' => 'Complaint updated successfully.',
+            'message' => $message,
             'complaint' => $this->transformComplaint($complaint),
+            'notificationSent' => $statusChanged ? $notificationSent : null,
+            'notificationReason' => $statusChanged ? $notificationReason : null,
+        ]);
+    }
+
+    public function destroy(Complaint $complaint): JsonResponse
+    {
+        if ($complaint->evidence_path) {
+            $relativePath = Str::startsWith($complaint->evidence_path, '/storage/')
+                ? Str::after($complaint->evidence_path, '/storage/')
+                : ltrim($complaint->evidence_path, '/');
+
+            if (Storage::disk('public')->exists($relativePath)) {
+                Storage::disk('public')->delete($relativePath);
+            }
+        }
+
+        $complaint->delete();
+
+        return response()->json([
+            'message' => 'Complaint deleted successfully.',
         ]);
     }
 
@@ -127,12 +213,15 @@ class ComplaintController extends Controller
             'id' => $complaint->id,
             'trackingNumber' => $complaint->tracking_number,
             'residentName' => $complaint->resident_name,
-            'contactNumber' => $complaint->contact_number,
+            'contactMethod' => $complaint->contact_method ?? Complaint::CONTACT_METHOD_PHONE,
+            'contactValue' => $complaint->contact_value ?? $complaint->contact_number,
+            'contactNumber' => $complaint->contact_value ?? $complaint->contact_number,
             'category' => $complaint->category,
             'description' => $complaint->description,
             'status' => $complaint->status,
             'dateSubmitted' => optional($complaint->date_submitted)->toDateString(),
             'evidencePath' => $complaint->evidence_path,
+            'evidenceUrl' => $complaint->evidence_path ? url("/api/complaints/{$complaint->id}/evidence") : null,
             'assignedOfficer' => $complaint->assigned_officer,
             'adminNotes' => $complaint->admin_notes,
             'createdAt' => optional($complaint->created_at)->toISOString(),
@@ -173,5 +262,207 @@ class ComplaintController extends Controller
             Complaint::CATEGORY_PROPERTY,
             Complaint::CATEGORY_OTHERS,
         ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function allowedContactMethods(): array
+    {
+        return [
+            Complaint::CONTACT_METHOD_PHONE,
+            Complaint::CONTACT_METHOD_EMAIL,
+        ];
+    }
+
+    private function validateContactValue(string $contactMethod, string $contactValue): void
+    {
+        if ($contactMethod === Complaint::CONTACT_METHOD_EMAIL) {
+            validator(
+                ['contactValue' => $contactValue],
+                ['contactValue' => ['required', 'email']]
+            )->validate();
+
+            return;
+        }
+
+        validator(
+            ['contactValue' => $contactValue],
+            ['contactValue' => ['required', 'regex:/^[0-9+\-\s()]{7,20}$/']]
+        )->validate();
+    }
+
+    private function isSubmissionLimitReached(string $contactMethod, string $contactValue): bool
+    {
+        $count = Complaint::query()
+            ->where('contact_method', $contactMethod)
+            ->where('contact_value', $contactValue)
+            ->where('date_submitted', '>=', Carbon::today())
+            ->count();
+
+        return $count >= $this->dailySubmissionLimit();
+    }
+
+    private function dailySubmissionLimit(): int
+    {
+        return (int) env('COMPLAINT_DAILY_SUBMISSION_LIMIT', 3);
+    }
+
+    /**
+     * @return array{sent: bool, reason: string|null}
+     */
+    private function notifyComplainantStatusUpdate(Complaint $complaint, string $previousStatus): array
+    {
+        $contactMethod = $complaint->contact_method ?? Complaint::CONTACT_METHOD_PHONE;
+        $contactValue = $complaint->contact_value ?? $complaint->contact_number;
+
+        if (! $contactValue) {
+            return [
+                'sent' => false,
+                'reason' => 'No contact value found for this complaint.',
+            ];
+        }
+
+        $message = "Update for complaint {$complaint->tracking_number}: status changed from {$previousStatus} to {$complaint->status}.";
+
+        return match ($contactMethod) {
+            Complaint::CONTACT_METHOD_EMAIL => $this->sendStatusUpdateEmail($contactValue, $message, $complaint),
+            Complaint::CONTACT_METHOD_PHONE => $this->sendStatusUpdateSms($contactValue, $message),
+            default => [
+                'sent' => false,
+                'reason' => 'Unsupported contact method.',
+            ],
+        };
+    }
+
+    /**
+     * @return array{sent: bool, reason: string|null}
+     */
+    private function sendStatusUpdateEmail(string $emailAddress, string $message, Complaint $complaint): array
+    {
+        if (! filter_var($emailAddress, FILTER_VALIDATE_EMAIL)) {
+            return [
+                'sent' => false,
+                'reason' => 'Invalid email address format.',
+            ];
+        }
+
+        $mailDriver = (string) config('mail.default', 'log');
+        if (in_array($mailDriver, ['log', 'array'], true)) {
+            return [
+                'sent' => false,
+                'reason' => "Mail driver '{$mailDriver}' does not deliver real emails. Configure SMTP or an email API provider.",
+            ];
+        }
+
+        try {
+            Mail::raw($message, function ($mail) use ($emailAddress, $complaint): void {
+                $mail
+                    ->to($emailAddress)
+                    ->subject("PaBlotterMo Complaint Update ({$complaint->tracking_number})");
+            });
+
+            return [
+                'sent' => true,
+                'reason' => null,
+            ];
+        } catch (Throwable $exception) {
+            Log::error('Failed to send complaint status email.', [
+                'email' => $emailAddress,
+                'complaint_id' => $complaint->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return [
+                'sent' => false,
+                'reason' => 'Email provider rejected the message.',
+            ];
+        }
+    }
+
+    /**
+     * @return array{sent: bool, reason: string|null}
+     */
+    private function sendStatusUpdateSms(string $phoneNumber, string $message): array
+    {
+        $normalizedPhone = $this->normalizePhilippinePhoneNumber($phoneNumber);
+        if (! $normalizedPhone) {
+            return [
+                'sent' => false,
+                'reason' => 'Invalid phone number format.',
+            ];
+        }
+
+        $apiKey = env('SEMAPHORE_API_KEY');
+        $senderName = env('SEMAPHORE_SENDER_NAME');
+        if (! $apiKey) {
+            Log::info('Complaint status SMS fallback (Semaphore not configured).', [
+                'to' => $normalizedPhone,
+                'message' => $message,
+            ]);
+
+            return [
+                'sent' => false,
+                'reason' => 'Semaphore API key is not configured.',
+            ];
+        }
+
+        $payload = [
+            'api_key' => $apiKey,
+            'number' => $normalizedPhone,
+            'message' => $message,
+        ];
+
+        if ($senderName) {
+            $payload['sendername'] = $senderName;
+        }
+
+        try {
+            Http::asForm()
+                ->post('https://semaphore.co/api/v4/messages', $payload)
+                ->throw();
+
+            return [
+                'sent' => true,
+                'reason' => null,
+            ];
+        } catch (RequestException $exception) {
+            Log::error('Semaphore status SMS sending failed.', [
+                'status' => optional($exception->response)->status(),
+                'body' => optional($exception->response)->body(),
+                'to' => $normalizedPhone,
+            ]);
+
+            return [
+                'sent' => false,
+                'reason' => 'SMS provider rejected the message.',
+            ];
+        }
+    }
+
+    private function normalizePhilippinePhoneNumber(?string $phoneNumber): ?string
+    {
+        if (! $phoneNumber) {
+            return null;
+        }
+
+        $normalized = preg_replace('/\D+/', '', $phoneNumber);
+        if (! $normalized) {
+            return null;
+        }
+
+        if (str_starts_with($normalized, '09') && strlen($normalized) === 11) {
+            return '+63'.substr($normalized, 1);
+        }
+
+        if (str_starts_with($normalized, '639') && strlen($normalized) === 12) {
+            return '+'.$normalized;
+        }
+
+        if (str_starts_with($normalized, '9') && strlen($normalized) === 10) {
+            return '+63'.$normalized;
+        }
+
+        return null;
     }
 }

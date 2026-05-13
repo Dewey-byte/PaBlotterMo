@@ -5,6 +5,7 @@ import LoginPage from "../views/LoginPage.vue";
 import AdminDashboard from "../views/AdminDashboard.vue";
 import ComplaintDetails from "../views/ComplaintDetails.vue";
 import TrackComplaint from "../views/TrackComplaint.vue";
+import NotFoundPage from "../views/NotFoundPage.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -15,5 +16,6 @@ export const router = createRouter({
     { path: "/admin/login", component: LoginPage },
     { path: "/admin", component: AdminDashboard },
     { path: "/admin/complaint/:id", component: ComplaintDetails },
+    { path: "/:pathMatch(.*)*", component: NotFoundPage },
   ],
 });

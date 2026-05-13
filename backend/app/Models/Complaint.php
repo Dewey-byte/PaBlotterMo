@@ -18,11 +18,15 @@ class Complaint extends Model
     public const CATEGORY_DOMESTIC = 'Domestic';
     public const CATEGORY_PROPERTY = 'Property';
     public const CATEGORY_OTHERS = 'Others';
+    public const CONTACT_METHOD_PHONE = 'phone';
+    public const CONTACT_METHOD_EMAIL = 'email';
 
     protected $fillable = [
         'tracking_number',
         'resident_name',
         'contact_number',
+        'contact_method',
+        'contact_value',
         'category',
         'description',
         'status',

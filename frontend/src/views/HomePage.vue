@@ -1,7 +1,7 @@
 <template>
   <div class="min-h-screen bg-slate-50">
     <header class="bg-white/90 backdrop-blur shadow-sm border-b border-slate-200 sticky top-0 z-20">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center">
         <div class="flex items-center space-x-3">
           <div class="bg-gradient-to-br from-[#1E3A8A] to-[#2563EB] p-2.5 rounded-xl shadow-lg">
             <Building2 class="w-8 h-8 text-white" />
@@ -11,12 +11,6 @@
             <p class="text-xs text-slate-500">Complaint Management System</p>
           </div>
         </div>
-        <RouterLink
-          to="/admin/login"
-          class="text-sm text-[#1E3A8A] font-semibold px-4 py-2 rounded-lg hover:bg-blue-50 transition"
-        >
-          Admin Login
-        </RouterLink>
       </div>
     </header>
 
@@ -185,7 +179,7 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
-import { useRouter, RouterLink } from "vue-router";
+import { useRouter } from "vue-router";
 import {
   Building2,
   FileText,

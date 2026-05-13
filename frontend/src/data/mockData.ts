@@ -5,12 +5,15 @@ export interface Complaint {
   id: number;
   trackingNumber: string;
   residentName: string;
+  contactMethod: "phone" | "email";
+  contactValue: string;
   contactNumber: string;
   category: ComplaintCategory;
   description: string;
   status: ComplaintStatus;
   dateSubmitted: string;
   evidencePath?: string | null;
+  evidenceUrl?: string | null;
   assignedOfficer?: string;
   adminNotes?: string;
   createdAt?: string;

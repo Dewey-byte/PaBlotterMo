@@ -39,10 +39,20 @@ export function useAuth() {
     localStorage.removeItem(USER_STORAGE_KEY);
   };
 
+  const setUser = (nextUser: User | null) => {
+    state.user = nextUser;
+    if (nextUser) {
+      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(nextUser));
+      return;
+    }
+    localStorage.removeItem(USER_STORAGE_KEY);
+  };
+
   return {
     user: computed(() => state.user),
     login,
     logout,
+    setUser,
   };
 }
 
