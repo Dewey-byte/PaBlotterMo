@@ -1,4 +1,4 @@
-export type ComplaintStatus = "Pending" | "Under Investigation" | "Resolved";
+export type ComplaintStatus = "Pending" | "Under Investigation" | "Resolved" | "Rejected";
 export type ComplaintCategory = "Noise" | "Theft" | "Domestic" | "Property" | "Others";
 
 export interface Complaint {
@@ -27,4 +27,5 @@ export interface ComplaintStats {
   pending: number;
   investigating: number;
   resolved: number;
+  rejected: number;
 }

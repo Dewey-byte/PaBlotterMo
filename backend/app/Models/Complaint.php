@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Complaint extends Model
 {
@@ -12,6 +13,7 @@ class Complaint extends Model
     public const STATUS_PENDING = 'Pending';
     public const STATUS_UNDER_INVESTIGATION = 'Under Investigation';
     public const STATUS_RESOLVED = 'Resolved';
+    public const STATUS_REJECTED = 'Rejected';
 
     public const CATEGORY_NOISE = 'Noise';
     public const CATEGORY_THEFT = 'Theft';
@@ -41,4 +43,13 @@ class Complaint extends Model
         'date_submitted' => 'datetime',
         'evidence_paths' => 'array',
     ];
+
+    /**
+     * @return HasMany<ComplaintEvidence, $this>
+     */
+    public function evidences(): HasMany
+    {
+        return $this->hasMany(ComplaintEvidence::class)->orderBy('sort_order');
+    }
 }
+

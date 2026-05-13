@@ -166,8 +166,8 @@
             <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-[#1E3A8A] transition">
               <Upload class="w-8 h-8 text-gray-400 mx-auto mb-2" />
               <p class="text-sm text-gray-600 mb-2">{{ fileName || "Click to upload or drag and drop" }}</p>
-              <p class="text-xs text-gray-500">Images, Videos, PDF up to 50MB each (max 5 files)</p>
-              <input id="file-upload" type="file" class="hidden" accept="image/*,video/*,.pdf" multiple @change="handleFileChange" />
+              <p class="text-xs text-gray-500">Images (including iPhone HEIC), videos, PDF — up to 50MB each (max 5 files)</p>
+              <input id="file-upload" type="file" class="hidden" accept="image/*,video/*,.pdf,.heic,.heif" multiple @change="handleFileChange" />
               <label for="file-upload" class="mt-4 inline-block px-4 py-2 bg-gray-100 text-gray-700 rounded-lg cursor-pointer hover:bg-gray-200 transition">
                 Choose File
               </label>
@@ -357,7 +357,15 @@ const handleFileChange = (event: Event) => {
 
   fileName.value = selectedFiles.value.length > 0 ? `${selectedFiles.value.length} file(s) selected` : "";
 
-  const previewImageTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+  const previewImageTypes = [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/heic",
+    "image/heif",
+    "image/heic-sequence",
+  ];
   const previewVideoTypes = ["video/mp4", "video/webm", "video/ogg", "video/quicktime", "video/x-m4v", "video/3gpp"];
   const previewImageFile = selectedFiles.value.find((file) => previewImageTypes.includes(file.type.toLowerCase()));
   const previewVideoFile = selectedFiles.value.find((file) => previewVideoTypes.includes(file.type.toLowerCase()));
@@ -390,7 +398,15 @@ const removeSelectedFile = (index: number) => {
   selectedFiles.value.splice(index, 1);
   fileName.value = selectedFiles.value.length > 0 ? `${selectedFiles.value.length} file(s) selected` : "";
 
-  const previewImageTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+  const previewImageTypes = [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/heic",
+    "image/heif",
+    "image/heic-sequence",
+  ];
   const previewVideoTypes = ["video/mp4", "video/webm", "video/ogg", "video/quicktime", "video/x-m4v", "video/3gpp"];
   const previewImageFile = selectedFiles.value.find((file) => previewImageTypes.includes(file.type.toLowerCase()));
   const previewVideoFile = selectedFiles.value.find((file) => previewVideoTypes.includes(file.type.toLowerCase()));

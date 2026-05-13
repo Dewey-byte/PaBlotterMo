@@ -4,16 +4,20 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Complaint;
+use App\Models\ComplaintEvidence;
 use Carbon\Carbon;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
 
 class ComplaintController extends Controller
@@ -45,6 +49,11 @@ class ComplaintController extends Controller
 
         $complaints = $query
             ->latest('date_submitted')
+            ->with([
+                'evidences' => static function ($q): void {
+                    $q->select(['id', 'complaint_id', 'sort_order', 'original_name', 'mime_type'])->orderBy('sort_order');
+                },
+            ])
             ->get()
             ->map(fn (Complaint $complaint) => $this->transformComplaint($complaint));
 
@@ -59,7 +68,7 @@ class ComplaintController extends Controller
             'category' => ['required', Rule::in($this->allowedCategories())],
             'description' => ['required', 'string'],
             'evidence' => ['nullable', 'array', 'max:5'],
-            'evidence.*' => ['file', 'mimes:jpg,jpeg,jfif,png,webp,heic,heif,pdf,mp4,mov,m4v,webm,ogg,3gp', 'max:51200'],
+            'evidence.*' => $this->evidenceAttachmentRules(),
         ]);
 
         $this->validateContactValue($validated['contactMethod'], $validated['contactValue']);
@@ -72,28 +81,42 @@ class ComplaintController extends Controller
             ], 429);
         }
 
-        $evidencePaths = [];
-        if ($request->hasFile('evidence')) {
-            /** @var array<int, \Illuminate\Http\UploadedFile> $files */
-            $files = $request->file('evidence');
-            foreach ($files as $file) {
-                $storedPath = $file->store('complaints', 'public');
-                $evidencePaths[] = Storage::url($storedPath);
-            }
-        }
+        $complaint = DB::transaction(function () use ($request, $validated) {
+            $record = Complaint::query()->create([
+                'tracking_number' => $this->generateTrackingNumber(),
+                'resident_name' => 'Anonymous',
+                'contact_number' => $validated['contactValue'],
+                'contact_method' => $validated['contactMethod'],
+                'contact_value' => $validated['contactValue'],
+                'category' => $validated['category'],
+                'description' => $validated['description'],
+                'status' => Complaint::STATUS_PENDING,
+                'date_submitted' => now(),
+                'evidence_path' => null,
+                'evidence_paths' => null,
+            ]);
 
-        $complaint = Complaint::query()->create([
-            'tracking_number' => $this->generateTrackingNumber(),
-            'resident_name' => 'Anonymous',
-            'contact_number' => $validated['contactValue'],
-            'contact_method' => $validated['contactMethod'],
-            'contact_value' => $validated['contactValue'],
-            'category' => $validated['category'],
-            'description' => $validated['description'],
-            'status' => Complaint::STATUS_PENDING,
-            'date_submitted' => now(),
-            'evidence_path' => $evidencePaths[0] ?? null,
-            'evidence_paths' => $evidencePaths ?: null,
+            if ($request->hasFile('evidence')) {
+                /** @var array<int, \Illuminate\Http\UploadedFile> $files */
+                $files = $request->file('evidence');
+                foreach (array_values($files) as $i => $file) {
+                    ComplaintEvidence::query()->create([
+                        'complaint_id' => $record->id,
+                        'sort_order' => $i,
+                        'original_name' => $file->getClientOriginalName() ?: 'attachment-'.$i,
+                        'mime_type' => $file->getMimeType() ?: null,
+                        'file_data' => $file->getContent(),
+                    ]);
+                }
+            }
+
+            return $record;
+        });
+
+        $complaint->load([
+            'evidences' => static function ($q): void {
+                $q->select(['id', 'complaint_id', 'sort_order', 'original_name', 'mime_type'])->orderBy('sort_order');
+            },
         ]);
 
         return response()->json([
@@ -102,13 +125,69 @@ class ComplaintController extends Controller
         ], 201);
     }
 
+    /**
+     * iPhone HEIC uploads often report as application/octet-stream, so Laravel's mimes rule rejects them.
+     *
+     * @return array<int, \Closure|string>
+     */
+    private function evidenceAttachmentRules(): array
+    {
+        return [
+            'file',
+            'max:51200',
+            function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! $value instanceof UploadedFile) {
+                    return;
+                }
+
+                $allowedExtensions = [
+                    'jpg', 'jpeg', 'jfif', 'png', 'webp', 'heic', 'heif',
+                    'pdf', 'mp4', 'mov', 'm4v', 'webm', 'ogg', '3gp',
+                ];
+
+                $ext = strtolower($value->getClientOriginalExtension());
+                if ($ext === '') {
+                    $ext = strtolower((string) $value->guessExtension());
+                }
+
+                $mime = strtolower((string) $value->getMimeType());
+                if (in_array($mime, ['image/heic', 'image/heif', 'image/heic-sequence'], true)) {
+                    return;
+                }
+
+                if (! in_array($ext, $allowedExtensions, true)) {
+                    $fail('Each attachment must be an image (including iPhone HEIC), PDF, or a supported video format.');
+                }
+            },
+        ];
+    }
+
     public function show(Complaint $complaint): JsonResponse
     {
         return response()->json($this->transformComplaint($complaint));
     }
 
-    public function evidence(Complaint $complaint, int $index = 0): BinaryFileResponse|JsonResponse
+    public function evidence(Complaint $complaint, int $index = 0): BinaryFileResponse|JsonResponse|StreamedResponse
     {
+        if ($complaint->evidences()->exists()) {
+            $attachment = $complaint->evidences()->orderBy('sort_order')->skip($index)->first();
+            if (! $attachment) {
+                return response()->json([
+                    'message' => 'No evidence file found for this complaint.',
+                ], 404);
+            }
+
+            $mime = $attachment->mime_type ?: 'application/octet-stream';
+            $filename = basename($attachment->original_name) ?: 'evidence';
+
+            return response()->stream(function () use ($attachment): void {
+                echo $attachment->file_data;
+            }, 200, [
+                'Content-Type' => $mime,
+                'Content-Disposition' => 'inline; filename="'.$filename.'"',
+            ]);
+        }
+
         $paths = $this->complaintEvidencePaths($complaint);
         $selectedPath = $paths[$index] ?? null;
 
@@ -118,17 +197,43 @@ class ComplaintController extends Controller
             ], 404);
         }
 
-        $relativePath = Str::startsWith($selectedPath, '/storage/')
-            ? Str::after($selectedPath, '/storage/')
-            : ltrim($selectedPath, '/');
+        $key = $this->evidenceStorageKey($selectedPath);
+        $diskName = $this->resolveEvidenceReadDisk($key);
 
-        if (! Storage::disk('public')->exists($relativePath)) {
+        if ($diskName === null) {
             return response()->json([
                 'message' => 'Evidence file does not exist on disk.',
             ], 404);
         }
 
-        return response()->file(Storage::disk('public')->path($relativePath));
+        $disk = Storage::disk($diskName);
+
+        if ($diskName === 'public') {
+            return response()->file($disk->path($key));
+        }
+
+        if (! $disk->exists($key)) {
+            return response()->json([
+                'message' => 'Evidence file does not exist on disk.',
+            ], 404);
+        }
+
+        $mime = $disk->mimeType($key) ?? 'application/octet-stream';
+        $filename = basename($key);
+
+        return response()->stream(function () use ($disk, $key): void {
+            $stream = $disk->readStream($key);
+            if (! is_resource($stream)) {
+                return;
+            }
+            fpassthru($stream);
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+        }, 200, [
+            'Content-Type' => $mime,
+            'Content-Disposition' => 'inline; filename="'.$filename.'"',
+        ]);
     }
 
     public function track(string $trackingNumber): JsonResponse
@@ -188,13 +293,13 @@ class ComplaintController extends Controller
 
     public function destroy(Complaint $complaint): JsonResponse
     {
-        foreach ($this->complaintEvidencePaths($complaint) as $path) {
-            $relativePath = Str::startsWith($path, '/storage/')
-                ? Str::after($path, '/storage/')
-                : ltrim($path, '/');
-
-            if (Storage::disk('public')->exists($relativePath)) {
-                Storage::disk('public')->delete($relativePath);
+        if (! $complaint->evidences()->exists()) {
+            foreach ($this->complaintEvidencePaths($complaint) as $path) {
+                $key = $this->evidenceStorageKey($path);
+                $diskName = $this->resolveEvidenceReadDisk($key);
+                if ($diskName !== null) {
+                    Storage::disk($diskName)->delete($key);
+                }
             }
         }
 
@@ -212,6 +317,7 @@ class ComplaintController extends Controller
             'pending' => Complaint::query()->where('status', Complaint::STATUS_PENDING)->count(),
             'investigating' => Complaint::query()->where('status', Complaint::STATUS_UNDER_INVESTIGATION)->count(),
             'resolved' => Complaint::query()->where('status', Complaint::STATUS_RESOLVED)->count(),
+            'rejected' => Complaint::query()->where('status', Complaint::STATUS_REJECTED)->count(),
         ]);
     }
 
@@ -263,6 +369,7 @@ class ComplaintController extends Controller
             Complaint::STATUS_PENDING,
             Complaint::STATUS_UNDER_INVESTIGATION,
             Complaint::STATUS_RESOLVED,
+            Complaint::STATUS_REJECTED,
         ];
     }
 
@@ -506,11 +613,62 @@ class ComplaintController extends Controller
         return null;
     }
 
+    private function evidenceWriteDisk(): string
+    {
+        return (string) config('complaint_evidence.disk', 'public');
+    }
+
+    /**
+     * Prefer the configured read disk, then fall back to "public" for legacy rows.
+     *
+     * @return non-empty-string|null
+     */
+    private function resolveEvidenceReadDisk(string $key): ?string
+    {
+        $primary = $this->evidenceWriteDisk();
+
+        if (Storage::disk($primary)->exists($key)) {
+            return $primary;
+        }
+
+        if ($primary !== 'public' && Storage::disk('public')->exists($key)) {
+            return 'public';
+        }
+
+        return null;
+    }
+
+    /**
+     * Database may store a storage key (complaints/…), a /storage/ URL path, or a full URL.
+     */
+    private function evidenceStorageKey(string $storedUrlOrPath): string
+    {
+        $storedUrlOrPath = trim($storedUrlOrPath);
+
+        if (str_contains($storedUrlOrPath, '/storage/')) {
+            return Str::after($storedUrlOrPath, '/storage/');
+        }
+
+        return ltrim($storedUrlOrPath, '/');
+    }
+
     /**
      * @return array<int, string>
      */
     private function complaintEvidencePaths(Complaint $complaint): array
     {
+        if (! $complaint->relationLoaded('evidences')) {
+            $complaint->load([
+                'evidences' => static function ($q): void {
+                    $q->select(['id', 'complaint_id', 'sort_order', 'original_name', 'mime_type'])->orderBy('sort_order');
+                },
+            ]);
+        }
+
+        if ($complaint->evidences->isNotEmpty()) {
+            return $complaint->evidences->pluck('original_name')->all();
+        }
+
         $paths = $complaint->evidence_paths;
         if (is_array($paths) && count($paths) > 0) {
             return array_values(array_filter(array_map('strval', $paths)));

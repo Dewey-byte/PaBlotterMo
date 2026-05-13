@@ -38,6 +38,7 @@ class ReportController extends Controller
             'pending' => Complaint::query()->where('status', Complaint::STATUS_PENDING)->count(),
             'investigating' => Complaint::query()->where('status', Complaint::STATUS_UNDER_INVESTIGATION)->count(),
             'resolved' => Complaint::query()->where('status', Complaint::STATUS_RESOLVED)->count(),
+            'rejected' => Complaint::query()->where('status', Complaint::STATUS_REJECTED)->count(),
         ];
 
         return response()->json([

@@ -119,6 +119,7 @@
               <option value="Pending">Pending</option>
               <option value="Under Investigation">Under Investigation</option>
               <option value="Resolved">Resolved</option>
+              <option value="Rejected">Rejected</option>
             </select>
           </div>
 
@@ -253,8 +254,7 @@ const resolveEvidenceUrl = (currentComplaint: Complaint, index: number) => {
 
 const isImageEvidence = (value: string) => {
   const lower = value.toLowerCase();
-  // Only render formats that browsers reliably display inline.
-  return [".jpg", ".jpeg", ".png", ".webp", ".gif", ".jfif"].some((ext) => lower.includes(ext));
+  return [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif"].some((ext) => lower.includes(ext));
 };
 
 const isVideoEvidence = (value: string) => {

@@ -56,7 +56,7 @@
             {{ loadError }}
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
             <div class="bg-white rounded-2xl p-6 shadow-lg border border-slate-100">
               <div class="bg-purple-100 p-3 rounded-lg w-fit mb-3"><AlertCircle class="w-6 h-6 text-purple-600" /></div>
               <h3 class="text-sm font-medium text-gray-600 mb-1">Total Complaints</h3>
@@ -76,6 +76,11 @@
               <div class="bg-green-100 p-3 rounded-lg w-fit mb-3"><CheckCircle class="w-6 h-6 text-green-600" /></div>
               <h3 class="text-sm font-medium text-gray-600 mb-1">Resolved Cases</h3>
               <p class="text-3xl font-bold text-gray-900">{{ stats.resolved }}</p>
+            </div>
+            <div class="bg-white rounded-2xl p-6 shadow-lg border border-slate-100">
+              <div class="bg-red-100 p-3 rounded-lg w-fit mb-3"><Ban class="w-6 h-6 text-red-600" /></div>
+              <h3 class="text-sm font-medium text-gray-600 mb-1">Rejected</h3>
+              <p class="text-3xl font-bold text-gray-900">{{ stats.rejected }}</p>
             </div>
           </div>
 
@@ -130,6 +135,7 @@
                   <option value="Pending">Pending</option>
                   <option value="Under Investigation">Under Investigation</option>
                   <option value="Resolved">Resolved</option>
+                  <option value="Rejected">Rejected</option>
                 </select>
               </div>
               <div class="flex-1">
@@ -235,6 +241,10 @@
                   <div class="flex items-center justify-between p-4 bg-green-50 rounded-lg">
                     <span class="text-gray-700">Resolved</span>
                     <span class="text-2xl font-bold text-green-600">{{ reportData.statusOverview.resolved }}</span>
+                  </div>
+                  <div class="flex items-center justify-between p-4 bg-red-50 rounded-lg">
+                    <span class="text-gray-700">Rejected</span>
+                    <span class="text-2xl font-bold text-red-600">{{ reportData.statusOverview.rejected }}</span>
                   </div>
                 </div>
               </div>
@@ -513,6 +523,7 @@ import {
   Search,
   CheckCircle,
   AlertCircle,
+  Ban,
   Filter,
   X,
   EyeOff,
@@ -557,6 +568,7 @@ const stats = ref<ComplaintStats>({
   pending: 0,
   investigating: 0,
   resolved: 0,
+  rejected: 0,
 });
 
 interface CategoryReportRow {
@@ -572,6 +584,7 @@ interface ReportsOverview {
     pending: number;
     investigating: number;
     resolved: number;
+    rejected: number;
   };
   generatedAt: string;
 }
