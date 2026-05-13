@@ -49,11 +49,6 @@ class ComplaintController extends Controller
 
         $complaints = $query
             ->latest('date_submitted')
-            ->with([
-                'evidences' => static function ($q): void {
-                    $q->select(['id', 'complaint_id', 'sort_order', 'original_name', 'mime_type'])->orderBy('sort_order');
-                },
-            ])
             ->get()
             ->map(fn (Complaint $complaint) => $this->transformComplaint($complaint));
 
@@ -115,7 +110,7 @@ class ComplaintController extends Controller
 
         $complaint->load([
             'evidences' => static function ($q): void {
-                $q->select(['id', 'complaint_id', 'sort_order', 'original_name', 'mime_type'])->orderBy('sort_order');
+                $q->select(['id', 'complaint_id', 'sort_order', 'original_name', 'mime_type']);
             },
         ]);
 
@@ -334,24 +329,42 @@ class ComplaintController extends Controller
 
         return [
             'id' => $complaint->id,
-            'trackingNumber' => $complaint->tracking_number,
-            'residentName' => $complaint->resident_name,
-            'contactMethod' => $complaint->contact_method ?? Complaint::CONTACT_METHOD_PHONE,
-            'contactValue' => $complaint->contact_value ?? $complaint->contact_number,
-            'contactNumber' => $complaint->contact_value ?? $complaint->contact_number,
-            'category' => $complaint->category,
-            'description' => $complaint->description,
-            'status' => $complaint->status,
+            'trackingNumber' => $this->utf8JsonString($complaint->tracking_number),
+            'residentName' => $this->utf8JsonString($complaint->resident_name),
+            'contactMethod' => $this->utf8JsonString($complaint->contact_method) ?? Complaint::CONTACT_METHOD_PHONE,
+            'contactValue' => $this->utf8JsonString($complaint->contact_value ?? $complaint->contact_number),
+            'contactNumber' => $this->utf8JsonString($complaint->contact_value ?? $complaint->contact_number),
+            'category' => $this->utf8JsonString($complaint->category),
+            'description' => $this->utf8JsonString($complaint->description),
+            'status' => $this->utf8JsonString($complaint->status),
             'dateSubmitted' => optional($complaint->date_submitted)->toDateString(),
-            'evidencePath' => $evidencePaths[0] ?? null,
+            'evidencePath' => isset($evidencePaths[0]) ? $this->utf8JsonString($evidencePaths[0]) : null,
             'evidenceUrl' => $evidenceUrls[0] ?? null,
-            'evidencePaths' => $evidencePaths,
+            'evidencePaths' => array_map(
+                fn ($p): string => $this->utf8JsonString((string) $p) ?? '',
+                $evidencePaths
+            ),
             'evidenceUrls' => $evidenceUrls,
-            'assignedOfficer' => $complaint->assigned_officer,
-            'adminNotes' => $complaint->admin_notes,
-            'createdAt' => optional($complaint->created_at)->toISOString(),
-            'updatedAt' => optional($complaint->updated_at)->toISOString(),
+            'assignedOfficer' => $this->utf8JsonString($complaint->assigned_officer),
+            'adminNotes' => $this->utf8JsonString($complaint->admin_notes),
+            'createdAt' => $complaint->created_at?->toIso8601String(),
+            'updatedAt' => $complaint->updated_at?->toIso8601String(),
         ];
+    }
+
+    private function utf8JsonString(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if ($value === '') {
+            return '';
+        }
+
+        $clean = iconv('UTF-8', 'UTF-8//IGNORE', $value);
+
+        return $clean === false ? '' : $clean;
     }
 
     private function generateTrackingNumber(): string
@@ -663,7 +676,7 @@ class ComplaintController extends Controller
         if (! $complaint->relationLoaded('evidences')) {
             $complaint->load([
                 'evidences' => static function ($q): void {
-                    $q->select(['id', 'complaint_id', 'sort_order', 'original_name', 'mime_type'])->orderBy('sort_order');
+                    $q->select(['id', 'complaint_id', 'sort_order', 'original_name', 'mime_type']);
                 },
             ]);
         }

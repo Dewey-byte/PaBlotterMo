@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ComplaintEvidence extends Model
 {
+    protected $table = 'complaint_evidences';
+
     protected $fillable = [
         'complaint_id',
         'sort_order',

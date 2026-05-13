@@ -41,8 +41,46 @@ class Complaint extends Model
 
     protected $casts = [
         'date_submitted' => 'datetime',
-        'evidence_paths' => 'array',
     ];
+
+    /**
+     * Tolerant decoding: bad/legacy JSON must not crash list endpoints.
+     *
+     * @param  mixed  $value
+     */
+    public function getEvidencePathsAttribute($value): ?array
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_array($value)) {
+            return array_values(array_filter(array_map('strval', $value)));
+        }
+
+        $decoded = json_decode((string) $value, true);
+
+        return is_array($decoded)
+            ? array_values(array_filter(array_map('strval', $decoded)))
+            : null;
+    }
+
+    /**
+     * @param  mixed  $value
+     */
+    public function setEvidencePathsAttribute($value): void
+    {
+        if ($value === null) {
+            $this->attributes['evidence_paths'] = null;
+
+            return;
+        }
+
+        $this->attributes['evidence_paths'] = json_encode(
+            array_values(is_array($value) ? $value : []),
+            JSON_INVALID_UTF8_SUBSTITUTE
+        );
+    }
 
     /**
      * @return HasMany<ComplaintEvidence, $this>
