@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -57,14 +58,22 @@ class ComplaintController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'contactMethod' => ['required', Rule::in($this->allowedContactMethods())],
-            'contactValue' => ['required', 'string', 'max:255'],
-            'category' => ['required', Rule::in($this->allowedCategories())],
-            'description' => ['required', 'string'],
-            'evidence' => ['nullable', 'array', 'max:5'],
-            'evidence.*' => $this->evidenceAttachmentRules(),
-        ]);
+        $evidenceFiles = $this->normalizeEvidenceUploads($request);
+
+        $validated = Validator::make(
+            array_merge(
+                $request->only(['contactMethod', 'contactValue', 'category', 'description']),
+                ['evidence' => $evidenceFiles]
+            ),
+            [
+                'contactMethod' => ['required', Rule::in($this->allowedContactMethods())],
+                'contactValue' => ['required', 'string', 'max:255'],
+                'category' => ['required', Rule::in($this->allowedCategories())],
+                'description' => ['required', 'string'],
+                'evidence' => ['nullable', 'array', 'max:5'],
+                'evidence.*' => $this->evidenceAttachmentRules(),
+            ]
+        )->validate();
 
         $this->validateContactValue($validated['contactMethod'], $validated['contactValue']);
 
@@ -76,7 +85,7 @@ class ComplaintController extends Controller
             ], 429);
         }
 
-        $complaint = DB::transaction(function () use ($request, $validated) {
+        $complaint = DB::transaction(function () use ($validated, $evidenceFiles) {
             $record = Complaint::query()->create([
                 'tracking_number' => $this->generateTrackingNumber(),
                 'resident_name' => 'Anonymous',
@@ -91,18 +100,14 @@ class ComplaintController extends Controller
                 'evidence_paths' => null,
             ]);
 
-            if ($request->hasFile('evidence')) {
-                /** @var array<int, \Illuminate\Http\UploadedFile> $files */
-                $files = $request->file('evidence');
-                foreach (array_values($files) as $i => $file) {
-                    ComplaintEvidence::query()->create([
-                        'complaint_id' => $record->id,
-                        'sort_order' => $i,
-                        'original_name' => $file->getClientOriginalName() ?: 'attachment-'.$i,
-                        'mime_type' => $file->getMimeType() ?: null,
-                        'file_data' => $file->getContent(),
-                    ]);
-                }
+            foreach ($evidenceFiles as $i => $file) {
+                ComplaintEvidence::query()->create([
+                    'complaint_id' => $record->id,
+                    'sort_order' => $i,
+                    'original_name' => $file->getClientOriginalName() ?: 'attachment-'.$i,
+                    'mime_type' => $file->getMimeType() ?: null,
+                    'file_data' => $file->getContent(),
+                ]);
             }
 
             return $record;
@@ -118,6 +123,35 @@ class ComplaintController extends Controller
             'message' => 'Complaint submitted successfully.',
             'complaint' => $this->transformComplaint($complaint),
         ], 201);
+    }
+
+    /**
+     * Multipart file fields vary by client (evidence, evidence[], evidence[0], …). Normalize so validation and DB save always run.
+     *
+     * @return list<UploadedFile>
+     */
+    private function normalizeEvidenceUploads(Request $request): array
+    {
+        $out = [];
+
+        foreach ($request->allFiles() as $name => $file) {
+            if (! is_string($name)) {
+                continue;
+            }
+
+            if ($name !== 'evidence' && ! str_starts_with($name, 'evidence[')) {
+                continue;
+            }
+
+            $items = is_array($file) ? $file : [$file];
+            foreach ($items as $item) {
+                if ($item instanceof UploadedFile && $item->isValid()) {
+                    $out[] = $item;
+                }
+            }
+        }
+
+        return array_slice($out, 0, 5);
     }
 
     /**

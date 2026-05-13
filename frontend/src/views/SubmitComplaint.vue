@@ -278,9 +278,9 @@ const handleSubmit = async () => {
     payload.append("contactValue", formData.contactValue);
     payload.append("category", formData.category);
     payload.append("description", formData.description);
-    for (const file of selectedFiles.value) {
-      payload.append("evidence[]", file);
-    }
+    selectedFiles.value.forEach((file, index) => {
+      payload.append(`evidence[${index}]`, file);
+    });
 
     const response = await apiRequest<CreateComplaintResponse>("/complaints", {
       method: "POST",
