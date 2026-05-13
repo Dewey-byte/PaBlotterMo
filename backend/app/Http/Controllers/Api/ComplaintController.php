@@ -10,7 +10,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -377,29 +376,37 @@ class ComplaintController extends Controller
             ];
         }
 
-        $mailDriver = (string) config('mail.default', 'log');
-        if (in_array($mailDriver, ['log', 'array'], true)) {
+        $apiKey = (string) env('RESEND_API_KEY', '');
+        $fromAddress = (string) env('RESEND_FROM_EMAIL', 'onboarding@resend.dev');
+
+        if ($apiKey === '' || str_contains($apiKey, 'your_resend_api_key')) {
             return [
                 'sent' => false,
-                'reason' => "Mail driver '{$mailDriver}' does not deliver real emails. Configure SMTP or an email API provider.",
+                'reason' => 'Resend email provider is not configured.',
             ];
         }
 
         try {
-            Mail::raw($message, function ($mail) use ($emailAddress, $complaint): void {
-                $mail
-                    ->to($emailAddress)
-                    ->subject("Official Complaint Status Update - {$complaint->tracking_number}");
-            });
+            Http::withToken($apiKey)
+                ->acceptJson()
+                ->post('https://api.resend.com/emails', [
+                    'from' => $fromAddress,
+                    'to' => [$emailAddress],
+                    'subject' => "Official Complaint Status Update - {$complaint->tracking_number}",
+                    'text' => $message,
+                ])
+                ->throw();
 
             return [
                 'sent' => true,
                 'reason' => null,
             ];
-        } catch (Throwable $exception) {
+        } catch (RequestException $exception) {
             Log::error('Failed to send complaint status email.', [
                 'email' => $emailAddress,
                 'complaint_id' => $complaint->id,
+                'status' => optional($exception->response)->status(),
+                'body' => optional($exception->response)->body(),
                 'error' => $exception->getMessage(),
             ]);
 

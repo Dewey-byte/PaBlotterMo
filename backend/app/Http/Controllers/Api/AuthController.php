@@ -5,11 +5,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\AdminPasswordOtp;
 use App\Models\User;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use Throwable;
 
 class AuthController extends Controller
@@ -90,7 +91,7 @@ class AuthController extends Controller
             $otp->delete();
 
             return response()->json([
-                'message' => 'Failed to send OTP email. Check MAIL_USERNAME, MAIL_PASSWORD (Google App Password), and MAIL_FROM_ADDRESS in backend .env.',
+                'message' => 'Failed to send OTP email. Check RESEND_API_KEY and RESEND_FROM_EMAIL in backend .env.',
             ], 500);
         }
 
@@ -170,21 +171,11 @@ class AuthController extends Controller
 
     private function sendOtpEmail(string $emailAddress, string $otp): string
     {
-        $mailDriver = (string) config('mail.default', 'log');
-        $mailUsername = (string) env('MAIL_USERNAME', '');
-        $mailPassword = (string) env('MAIL_PASSWORD', '');
+        $apiKey = (string) env('RESEND_API_KEY', '');
+        $fromAddress = (string) env('RESEND_FROM_EMAIL', 'onboarding@resend.dev');
 
-        if (in_array($mailDriver, ['log', 'array'], true)) {
-            Log::info('OTP email fallback (mailer not configured for real delivery).', [
-                'to' => $emailAddress,
-                'otp' => $otp,
-            ]);
-
-            return 'fallback';
-        }
-
-        if ($mailUsername === '' || $mailPassword === '' || str_contains($mailUsername, 'yourgmail@gmail.com') || str_contains($mailPassword, 'your_google_app_password')) {
-            Log::info('OTP email fallback (placeholder mail credentials).', [
+        if ($apiKey === '' || str_contains($apiKey, 'your_resend_api_key')) {
+            Log::info('OTP email fallback (Resend not configured for real delivery).', [
                 'to' => $emailAddress,
                 'otp' => $otp,
             ]);
@@ -205,15 +196,22 @@ class AuthController extends Controller
         ]);
 
         try {
-            Mail::raw($message, function ($mail) use ($emailAddress): void {
-                $mail
-                    ->to($emailAddress)
-                    ->subject('Official OTP for Admin Password Reset');
-            });
+            Http::withToken($apiKey)
+                ->acceptJson()
+                ->post('https://api.resend.com/emails', [
+                    'from' => $fromAddress,
+                    'to' => [$emailAddress],
+                    'subject' => 'Official OTP for Admin Password Reset',
+                    'text' => $message,
+                ])
+                ->throw();
+
             return 'sent';
-        } catch (Throwable $exception) {
+        } catch (RequestException $exception) {
             Log::error('OTP email sending failed.', [
                 'to' => $emailAddress,
+                'status' => optional($exception->response)->status(),
+                'body' => optional($exception->response)->body(),
                 'error' => $exception->getMessage(),
             ]);
 
