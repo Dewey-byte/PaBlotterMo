@@ -324,10 +324,13 @@ class ComplaintController extends Controller
     private function transformComplaint(Complaint $complaint): array
     {
         $evidencePaths = $this->complaintEvidencePaths($complaint);
-        $evidenceUrls = collect($evidencePaths)
-            ->values()
-            ->map(fn (string $value, int $index): string => secure_url("/api/complaints/{$complaint->id}/evidence/{$index}"))
-            ->all();
+        $count = count($evidencePaths);
+        $evidenceUrls = $count > 0
+            ? array_map(
+                fn (int $i): string => secure_url("/api/complaints/{$complaint->id}/evidence/{$i}"),
+                range(0, $count - 1)
+            )
+            : [];
 
         return [
             'id' => $complaint->id,
@@ -666,7 +669,11 @@ class ComplaintController extends Controller
         }
 
         if ($complaint->evidences->isNotEmpty()) {
-            return $complaint->evidences->pluck('original_name')->all();
+            return $complaint->evidences
+                ->pluck('original_name')
+                ->map(fn ($name): string => $name !== null && $name !== '' ? (string) $name : 'attachment')
+                ->values()
+                ->all();
         }
 
         $paths = $complaint->evidence_paths;
