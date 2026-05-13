@@ -253,7 +253,8 @@ const resolveEvidenceUrl = (currentComplaint: Complaint, index: number) => {
 
 const isImageEvidence = (value: string) => {
   const lower = value.toLowerCase();
-  return [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif", ".jfif"].some((ext) => lower.includes(ext));
+  // Only render formats that browsers reliably display inline.
+  return [".jpg", ".jpeg", ".png", ".webp", ".gif", ".jfif"].some((ext) => lower.includes(ext));
 };
 
 const isVideoEvidence = (value: string) => {
