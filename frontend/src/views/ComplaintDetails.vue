@@ -87,17 +87,66 @@
                   <div v-for="(evidencePath, index) in availableEvidencePaths" :key="`${evidencePath}-${index}`">
                     <p class="text-xs text-gray-500 mb-2">Attachment {{ index + 1 }}</p>
                     <img
-                      v-if="isImageEvidence(evidencePath)"
+                      v-if="supportsInlineImgPreview(evidencePath, evidenceMimeAt(index))"
                       :src="resolveEvidenceUrl(complaint, index)"
                       alt="Resident evidence"
                       class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white"
                     />
-                    <video
-                      v-else-if="isVideoEvidence(evidencePath)"
-                      :src="resolveEvidenceUrl(complaint, index)"
-                      controls
-                      class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white w-full"
-                    />
+                    <div
+                      v-else-if="isHeicFamilyEvidence(evidencePath, evidenceMimeAt(index))"
+                      class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+                    >
+                      <p class="mb-2">
+                        Preview is not supported in this browser for this file type (HEIC/HEIF). Open or download the file to
+                        view it.
+                      </p>
+                      <a
+                        :href="resolveEvidenceUrl(complaint, index)"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="font-medium text-[#1E3A8A] hover:underline"
+                      >
+                        Open / download
+                      </a>
+                    </div>
+                    <div v-else-if="looksLikeVideoEvidence(evidencePath, evidenceMimeAt(index))" class="space-y-2">
+                      <video
+                        v-show="!videoPlaybackFailed[index]"
+                        :src="resolveEvidenceUrl(complaint, index)"
+                        controls
+                        playsinline
+                        class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white w-full"
+                        @error="markVideoPlaybackFailed(index)"
+                      />
+                      <div
+                        v-if="videoPlaybackFailed[index]"
+                        class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+                      >
+                        <p class="mb-2">
+                          Inline playback isn’t supported for this clip in your browser (for example some iPhone MOV/HEVC). Open
+                          it in a new tab or download it instead.
+                        </p>
+                        <a
+                          :href="resolveEvidenceUrl(complaint, index)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="font-medium text-[#1E3A8A] hover:underline"
+                        >
+                          Open in new tab
+                        </a>
+                      </div>
+                      <p v-else class="text-xs text-gray-600">
+                        <a
+                          :href="resolveEvidenceUrl(complaint, index)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="font-medium text-[#1E3A8A] hover:underline"
+                        >
+                          Open in new tab
+                        </a>
+                        <span class="text-gray-500"> — use if playback fails</span>
+                      </p>
+                    </div>
                     <a
                       v-else
                       :href="resolveEvidenceUrl(complaint, index)"
@@ -165,7 +214,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuth } from "../composables/useAuth";
 import { API_BASE_URL, apiRequest } from "../lib/api";
@@ -194,11 +243,68 @@ const updateSuccess = ref("");
 const notificationMessage = ref("");
 const notificationSent = ref<boolean | null>(null);
 const loadingComplaint = ref(true);
+const videoPlaybackFailed = ref<Record<number, boolean>>({});
+
+watch(
+  () => complaint.value?.id,
+  () => {
+    videoPlaybackFailed.value = {};
+  },
+);
+
 const availableEvidencePaths = computed(() => {
   const paths = complaint.value?.evidencePaths ?? [];
   if (paths.length > 0) return paths;
   return complaint.value?.evidencePath ? [complaint.value.evidencePath] : [];
 });
+
+const evidenceMimeAt = (index: number) => complaint.value?.evidenceMimeTypes?.[index] ?? null;
+
+/** Path segment used for HEIC/octet-stream heuristics when the API omits MIME (legacy uploads). */
+const evidenceBasename = (path: string) => {
+  const stripped = path.split(/[?#]/)[0] ?? path;
+  return stripped.split(/[/\\]/).pop() ?? stripped;
+};
+
+const evidenceFileExtension = (path: string): string => {
+  const base = evidenceBasename(path);
+  const m = /\.([^.]+)$/.exec(base);
+  return m ? m[1].toLowerCase() : "";
+};
+
+const mimeIsHeicFamily = (mime?: string | null) => {
+  if (!mime) return false;
+  const m = mime.toLowerCase();
+  if (m === "image/heic" || m === "image/heif" || m === "image/heic-sequence") return true;
+  return m.startsWith("image/") && (m.includes("heic") || m.includes("heif"));
+};
+
+const isHeicFamilyEvidence = (pathHint: string, mime?: string | null) => {
+  if (mimeIsHeicFamily(mime)) return true;
+  const ext = evidenceFileExtension(pathHint);
+  if (ext !== "heic" && ext !== "heif") return false;
+  const mu = mime?.toLowerCase() ?? "";
+  return mu === "" || mu === "application/octet-stream" || mu.startsWith("image/");
+};
+
+const supportsInlineImgPreview = (pathHint: string, mime?: string | null) => {
+  if (isHeicFamilyEvidence(pathHint, mime)) return false;
+  const mu = (mime ?? "").toLowerCase();
+  if (mu.startsWith("image/")) return true;
+  const ext = evidenceFileExtension(pathHint);
+  return ["jpg", "jpeg", "jfif", "png", "gif", "webp"].includes(ext);
+};
+
+const looksLikeVideoEvidence = (pathHint: string, mime?: string | null) => {
+  const mu = (mime ?? "").toLowerCase();
+  if (mu.startsWith("video/")) return true;
+  const ext = evidenceFileExtension(pathHint);
+  return ["mp4", "mov", "m4v", "webm", "ogg", "3gp"].includes(ext);
+};
+
+const markVideoPlaybackFailed = (index: number) => {
+  videoPlaybackFailed.value = { ...videoPlaybackFailed.value, [index]: true };
+};
 
 const fetchComplaint = async () => {
   const id = route.params.id;
@@ -252,16 +358,6 @@ const resolveEvidenceUrl = (currentComplaint: Complaint, index: number) => {
   }
 
   return index === 0 && currentComplaint.evidencePath ? toAbsoluteUrl(currentComplaint.evidencePath) : "";
-};
-
-const isImageEvidence = (value: string) => {
-  const lower = value.toLowerCase();
-  return [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif"].some((ext) => lower.includes(ext));
-};
-
-const isVideoEvidence = (value: string) => {
-  const lower = value.toLowerCase();
-  return [".mp4", ".mov", ".m4v", ".webm", ".ogg", ".3gp"].some((ext) => lower.includes(ext));
 };
 
 const handleUpdate = async () => {

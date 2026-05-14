@@ -16,6 +16,8 @@ export interface Complaint {
   evidenceUrl?: string | null;
   evidencePaths?: string[];
   evidenceUrls?: string[];
+  /** Server-reported MIME per evidence index (new DB blobs); omit for legacy disk-only uploads. */
+  evidenceMimeTypes?: (string | null)[];
   assignedOfficer?: string;
   adminNotes?: string;
   createdAt?: string;

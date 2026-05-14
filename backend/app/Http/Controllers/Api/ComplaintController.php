@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\BarangaySetting;
 use App\Models\Complaint;
 use App\Models\ComplaintEvidence;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\JsonResponse;
@@ -119,6 +121,8 @@ class ComplaintController extends Controller
             },
         ]);
 
+        $this->sendNewComplaintAdminNotifications($complaint);
+
         return response()->json([
             'message' => 'Complaint submitted successfully.',
             'complaint' => $this->transformComplaint($complaint),
@@ -208,6 +212,7 @@ class ComplaintController extends Controller
 
             $mime = $attachment->mime_type ?: 'application/octet-stream';
             $filename = basename($attachment->original_name) ?: 'evidence';
+            $mime = $this->coerceEvidenceContentType($mime, $filename);
 
             return response()->stream(function () use ($attachment): void {
                 echo $attachment->file_data;
@@ -238,7 +243,15 @@ class ComplaintController extends Controller
         $disk = Storage::disk($diskName);
 
         if ($diskName === 'public') {
-            return response()->file($disk->path($key));
+            $absolutePath = $disk->path($key);
+            $filename = basename($key);
+            $mime = $disk->mimeType($key) ?? 'application/octet-stream';
+            $mime = $this->coerceEvidenceContentType($mime, $filename);
+
+            return response()->file($absolutePath, [
+                'Content-Type' => $mime,
+                'Content-Disposition' => 'inline; filename="'.$filename.'"',
+            ]);
         }
 
         if (! $disk->exists($key)) {
@@ -249,6 +262,7 @@ class ComplaintController extends Controller
 
         $mime = $disk->mimeType($key) ?? 'application/octet-stream';
         $filename = basename($key);
+        $mime = $this->coerceEvidenceContentType($mime, $filename);
 
         return response()->stream(function () use ($disk, $key): void {
             $stream = $disk->readStream($key);
@@ -361,6 +375,17 @@ class ComplaintController extends Controller
             )
             : [];
 
+        $evidenceMimeTypes = $complaint->evidences->isNotEmpty()
+            ? $complaint->evidences
+                ->map(function ($evidence): ?string {
+                    $mime = $evidence->mime_type;
+
+                    return is_string($mime) && trim($mime) !== '' ? strtolower(trim($mime)) : null;
+                })
+                ->values()
+                ->all()
+            : array_fill(0, $count, null);
+
         return [
             'id' => $complaint->id,
             'trackingNumber' => $this->utf8JsonString($complaint->tracking_number),
@@ -379,6 +404,7 @@ class ComplaintController extends Controller
                 $evidencePaths
             ),
             'evidenceUrls' => $evidenceUrls,
+            'evidenceMimeTypes' => $evidenceMimeTypes,
             'assignedOfficer' => $this->utf8JsonString($complaint->assigned_officer),
             'adminNotes' => $this->utf8JsonString($complaint->admin_notes),
             'createdAt' => $complaint->created_at?->toIso8601String(),
@@ -522,17 +548,106 @@ class ComplaintController extends Controller
     }
 
     /**
-     * @return array{sent: bool, reason: string|null}
+     * Notify barangay contact email and admin users when a new complaint is filed (best-effort; never throws).
      */
-    private function sendStatusUpdateEmail(string $emailAddress, string $message, Complaint $complaint): array
+    private function sendNewComplaintAdminNotifications(Complaint $complaint): void
     {
-        if (! filter_var($emailAddress, FILTER_VALIDATE_EMAIL)) {
-            return [
-                'sent' => false,
-                'reason' => 'Invalid email address format.',
-            ];
+        try {
+            $settings = BarangaySetting::query()->first();
+            if ($settings === null || ! $settings->notify_email_new_complaints) {
+                return;
+            }
+
+            $recipients = $this->newComplaintNotificationRecipients($settings);
+            if ($recipients === []) {
+                Log::warning('New complaint email notification skipped: no valid recipient addresses.', [
+                    'complaint_id' => $complaint->id,
+                ]);
+
+                return;
+            }
+
+            $contactChannel = $complaint->contact_method ?? Complaint::CONTACT_METHOD_PHONE;
+            $excerpt = Str::limit(trim(strip_tags((string) $complaint->description)), 280);
+
+            $baseUrl = rtrim((string) (env('APP_URL') ?: config('app.url')), '/');
+            $adminHint = $baseUrl !== '' ? "{$baseUrl}/admin" : 'Open the PaBlotterMo admin dashboard.';
+
+            $barangayLabel = trim((string) $settings->barangay_name) !== ''
+                ? $settings->barangay_name
+                : 'Your barangay';
+
+            $body = implode("\n", [
+                'A new complaint was submitted through PaBlotterMo.',
+                '',
+                "Tracking number: {$complaint->tracking_number}",
+                "Category: {$complaint->category}",
+                'Contact channel used by resident: '.$contactChannel,
+                '',
+                'Description (excerpt):',
+                $excerpt !== '' ? $excerpt : '(none)',
+                '',
+                'Review this complaint in the admin dashboard:',
+                $adminHint,
+                '',
+                '— '.$barangayLabel.' (automated notice)',
+            ]);
+
+            $subject = "New complaint: {$complaint->tracking_number} ({$complaint->category})";
+
+            $result = $this->sendResendEmails($recipients, $subject, $body, [
+                'complaint_id' => $complaint->id,
+                'context' => 'new_complaint_admin_notice',
+            ]);
+
+            if (! $result['sent']) {
+                Log::warning('New complaint admin email was not sent.', [
+                    'complaint_id' => $complaint->id,
+                    'reason' => $result['reason'],
+                ]);
+            }
+        } catch (Throwable $exception) {
+            Log::error('Unexpected error while sending new complaint admin notification.', [
+                'complaint_id' => $complaint->id,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * @return list<non-empty-string>
+     */
+    private function newComplaintNotificationRecipients(BarangaySetting $settings): array
+    {
+        $normalized = [];
+
+        $contactEmail = trim((string) $settings->contact_email);
+        if ($contactEmail !== '' && filter_var($contactEmail, FILTER_VALIDATE_EMAIL)) {
+            $normalized[strtolower($contactEmail)] = $contactEmail;
         }
 
+        $adminEmails = User::query()
+            ->where('role', 'admin')
+            ->pluck('email');
+
+        foreach ($adminEmails as $email) {
+            $email = trim((string) $email);
+            if ($email === '' || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                continue;
+            }
+            $normalized[strtolower($email)] = $email;
+        }
+
+        return array_values($normalized);
+    }
+
+    /**
+     * @param  non-empty-list<string>  $toAddresses
+     * @param  array<string, mixed>  $logContext
+     * @return array{sent: bool, reason: string|null}
+     */
+    private function sendResendEmails(array $toAddresses, string $subject, string $textBody, array $logContext = []): array
+    {
         $apiKey = (string) env('RESEND_API_KEY', '');
         $fromAddress = (string) env('RESEND_FROM_EMAIL', 'onboarding@resend.dev');
 
@@ -548,9 +663,9 @@ class ComplaintController extends Controller
                 ->acceptJson()
                 ->post('https://api.resend.com/emails', [
                     'from' => $fromAddress,
-                    'to' => [$emailAddress],
-                    'subject' => "Official Complaint Status Update - {$complaint->tracking_number}",
-                    'text' => $message,
+                    'to' => array_values($toAddresses),
+                    'subject' => $subject,
+                    'text' => $textBody,
                 ])
                 ->throw();
 
@@ -559,13 +674,12 @@ class ComplaintController extends Controller
                 'reason' => null,
             ];
         } catch (RequestException $exception) {
-            Log::error('Failed to send complaint status email.', [
-                'email' => $emailAddress,
-                'complaint_id' => $complaint->id,
+            Log::error('Resend email request failed.', array_merge($logContext, [
+                'subject' => $subject,
                 'status' => optional($exception->response)->status(),
                 'body' => optional($exception->response)->body(),
                 'error' => $exception->getMessage(),
-            ]);
+            ]));
 
             $providerMessage = trim($exception->getMessage());
             $providerMessage = $providerMessage !== '' ? " Provider said: {$providerMessage}" : '';
@@ -575,6 +689,30 @@ class ComplaintController extends Controller
                 'reason' => "Email provider rejected the message.{$providerMessage}",
             ];
         }
+    }
+
+    /**
+     * @return array{sent: bool, reason: string|null}
+     */
+    private function sendStatusUpdateEmail(string $emailAddress, string $message, Complaint $complaint): array
+    {
+        if (! filter_var($emailAddress, FILTER_VALIDATE_EMAIL)) {
+            return [
+                'sent' => false,
+                'reason' => 'Invalid email address format.',
+            ];
+        }
+
+        return $this->sendResendEmails(
+            [$emailAddress],
+            "Official Complaint Status Update - {$complaint->tracking_number}",
+            $message,
+            [
+                'complaint_id' => $complaint->id,
+                'context' => 'complaint_status_update',
+                'resident_email' => $emailAddress,
+            ]
+        );
     }
 
     /**
@@ -729,5 +867,34 @@ class ComplaintController extends Controller
         }
 
         return $complaint->evidence_path ? [$complaint->evidence_path] : [];
+    }
+
+    /**
+     * iPhone uploads may be stored as application/octet-stream; map known extensions so clients get a useful Content-Type.
+     */
+    private function coerceEvidenceContentType(string $mime, string $filename): string
+    {
+        $mimeNorm = strtolower($mime);
+
+        if ($mimeNorm !== 'application/octet-stream' && $mimeNorm !== '') {
+            return $mime;
+        }
+
+        return match (strtolower(pathinfo($filename, PATHINFO_EXTENSION))) {
+            'heic' => 'image/heic',
+            'heif' => 'image/heif',
+            'jpg', 'jpeg', 'jfif' => 'image/jpeg',
+            'png' => 'image/png',
+            'webp' => 'image/webp',
+            'gif' => 'image/gif',
+            'pdf' => 'application/pdf',
+            'mp4' => 'video/mp4',
+            'mov', 'qt' => 'video/quicktime',
+            'webm' => 'video/webm',
+            'm4v' => 'video/x-m4v',
+            'ogg' => 'video/ogg',
+            '3gp' => 'video/3gpp',
+            default => $mimeNorm !== '' ? $mime : 'application/octet-stream',
+        };
     }
 }

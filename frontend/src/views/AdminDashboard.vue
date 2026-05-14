@@ -348,7 +348,10 @@
             <div class="space-y-3">
               <label class="flex items-start gap-3">
                 <input v-model="settingsForm.notifyEmailNewComplaints" type="checkbox" class="w-5 h-5 mt-0.5 text-[#1E3A8A] rounded shrink-0" />
-                <span class="text-gray-700 text-sm sm:text-base leading-snug">Email notifications for new complaints</span>
+                <span class="min-w-0">
+                  <span class="text-gray-700 text-sm sm:text-base leading-snug block">Email notifications for new complaints</span>
+                  <span class="text-gray-500 text-xs mt-1 block">Sent to Contact Email and every admin account.</span>
+                </span>
               </label>
               <label class="flex items-start gap-3">
                 <input v-model="settingsForm.notifySmsUrgentCases" type="checkbox" class="w-5 h-5 mt-0.5 text-[#1E3A8A] rounded shrink-0" />
