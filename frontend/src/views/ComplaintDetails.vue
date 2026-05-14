@@ -12,7 +12,7 @@
 
   <div v-else class="min-h-screen bg-slate-50">
     <header class="bg-white/90 backdrop-blur shadow-sm border-b border-slate-200">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
         <button @click="router.push({ path: '/admin', query: { tab: 'complaints' } })" class="flex items-center space-x-2 text-gray-700 hover:text-[#1E3A8A] transition">
           <ArrowLeft class="w-5 h-5" />
           <span>Back to Complaints</span>
@@ -20,17 +20,19 @@
       </div>
     </header>
 
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-2 space-y-6">
           <div class="bg-white rounded-2xl shadow-lg border border-slate-100 overflow-hidden">
-            <div class="bg-gradient-to-r from-[#1E3A8A] to-[#15803D] px-6 py-4">
-              <div class="flex items-center justify-between">
-                <div>
-                  <h1 class="text-2xl font-bold text-white">Complaint Details</h1>
-                  <p class="text-blue-100 text-sm mt-1">{{ complaint.trackingNumber }}</p>
+            <div class="bg-gradient-to-r from-[#1E3A8A] to-[#15803D] px-4 sm:px-6 py-4">
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div class="min-w-0">
+                  <h1 class="text-xl sm:text-2xl font-bold text-white">Complaint Details</h1>
+                  <p class="text-blue-100 text-sm mt-1 break-all">{{ complaint.trackingNumber }}</p>
                 </div>
-                <StatusBadge :status="status" />
+                <div class="shrink-0 self-start sm:self-auto">
+                  <StatusBadge :status="status" />
+                </div>
               </div>
             </div>
 

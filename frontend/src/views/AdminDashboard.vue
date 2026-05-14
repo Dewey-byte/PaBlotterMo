@@ -1,15 +1,37 @@
 <template>
-  <div v-if="user?.role === 'admin'" class="min-h-screen bg-slate-50 flex">
-    <aside class="w-64 bg-gradient-to-b from-[#1E3A8A] to-[#1D4ED8] text-white flex flex-col fixed h-full shadow-2xl">
-      <div class="p-6 border-b border-white/10">
-        <div class="flex items-center space-x-3">
-          <div class="bg-white/15 p-2 rounded-xl">
-            <Building2 class="w-6 h-6" />
+  <div v-if="user?.role === 'admin'" class="min-h-screen bg-slate-50 lg:flex">
+    <div
+      v-show="sidebarOpen"
+      class="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm lg:hidden"
+      aria-hidden="true"
+      @click="sidebarOpen = false"
+    />
+    <aside
+      :class="[
+        'w-64 max-w-[min(100vw-3rem,16rem)] bg-gradient-to-b from-[#1E3A8A] to-[#1D4ED8] text-white flex flex-col shadow-2xl',
+        'fixed inset-y-0 left-0 z-50 h-screen overflow-y-auto transition-transform duration-200 ease-out lg:static lg:z-auto lg:h-screen lg:max-w-none lg:translate-x-0 lg:shrink-0',
+        sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
+      ]"
+    >
+      <div class="p-6 border-b border-white/10 shrink-0">
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex items-center space-x-3 min-w-0">
+            <div class="bg-white/15 p-2 rounded-xl shrink-0">
+              <Building2 class="w-6 h-6" />
+            </div>
+            <div class="min-w-0">
+              <h1 class="font-bold text-lg leading-tight">PaBlotterMo Admin</h1>
+              <p class="text-xs text-blue-200">Management Portal</p>
+            </div>
           </div>
-          <div>
-            <h1 class="font-bold text-lg">PaBlotterMo Admin</h1>
-            <p class="text-xs text-blue-200">Management Portal</p>
-          </div>
+          <button
+            type="button"
+            class="lg:hidden p-2 rounded-lg hover:bg-white/10 shrink-0 -mr-2 -mt-1"
+            aria-label="Close navigation"
+            @click="sidebarOpen = false"
+          >
+            <X class="w-5 h-5" />
+          </button>
         </div>
       </div>
 
@@ -17,37 +39,56 @@
         <button
           v-for="item in menuItems"
           :key="item.id"
-          @click="activeTab = item.id"
+          type="button"
+          @click="selectTab(item.id)"
           :class="[
-            'w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition',
+            'w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition text-left',
             activeTab === item.id ? 'bg-[#15803D] text-white' : 'text-blue-100 hover:bg-white/10',
           ]"
         >
-          <component :is="item.icon" class="w-5 h-5" />
+          <component :is="item.icon" class="w-5 h-5 shrink-0" />
           <span class="font-medium">{{ item.label }}</span>
         </button>
       </nav>
 
-      <div class="p-4 border-t border-white/10">
-        <div class="mb-3 px-4">
-          <p class="text-sm font-medium">{{ user.name }}</p>
-          <p class="text-xs text-blue-200">{{ user.email }}</p>
+      <div class="p-4 border-t border-white/10 shrink-0">
+        <div class="mb-3 px-4 min-w-0">
+          <p class="text-sm font-medium truncate">{{ user.name }}</p>
+          <p class="text-xs text-blue-200 truncate">{{ user.email }}</p>
         </div>
         <button
+          type="button"
           @click="handleLogout"
           class="w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-blue-100 hover:bg-white/10 transition"
         >
-          <LogOut class="w-5 h-5" />
+          <LogOut class="w-5 h-5 shrink-0" />
           <span class="font-medium">Logout</span>
         </button>
       </div>
     </aside>
 
-    <main class="flex-1 ml-64">
-      <div class="p-8">
-        <div class="mb-8">
-          <h2 class="text-3xl font-bold text-slate-900 mb-2">{{ activeLabel }}</h2>
-          <p class="text-slate-600">{{ activeDescription }}</p>
+    <div class="flex flex-1 flex-col min-w-0">
+      <header
+        class="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-4 py-3 border-b border-white/10 bg-gradient-to-r from-[#1E3A8A] to-[#1D4ED8] text-white shadow-md"
+      >
+        <button
+          type="button"
+          class="p-2 rounded-lg hover:bg-white/10 shrink-0 -ml-2"
+          aria-label="Open navigation"
+          @click="sidebarOpen = true"
+        >
+          <Menu class="w-6 h-6" />
+        </button>
+        <div class="min-w-0 flex-1">
+          <p class="font-semibold truncate">PaBlotterMo Admin</p>
+          <p class="text-[11px] text-blue-100 truncate">{{ activeLabel }}</p>
+        </div>
+      </header>
+
+      <main class="flex-1 p-4 sm:p-6 lg:p-8 min-w-0">
+        <div class="mb-6 sm:mb-8">
+          <h2 class="text-2xl sm:text-3xl font-bold text-slate-900 mb-2">{{ activeLabel }}</h2>
+          <p class="text-slate-600 text-sm sm:text-base">{{ activeDescription }}</p>
         </div>
 
         <template v-if="activeTab === 'dashboard'">
@@ -90,7 +131,7 @@
               <div
                 v-for="complaint in recentComplaints"
                 :key="complaint.id"
-                class="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition"
+                class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition"
               >
                 <div class="flex-1">
                   <p class="font-medium text-gray-900">{{ complaint.trackingNumber }}</p>
@@ -103,34 +144,36 @@
         </template>
 
         <div v-else-if="activeTab === 'complaints'" class="bg-white rounded-2xl shadow-lg border border-slate-100 overflow-hidden">
-          <div class="px-6 py-4 border-b border-gray-200 space-y-4">
-            <div class="flex items-center justify-between gap-4">
-              <h3 class="text-lg font-semibold text-gray-900">All Complaints</h3>
-              <div class="relative flex-1 max-w-md">
+          <div class="px-4 py-4 sm:px-6 border-b border-gray-200 space-y-4">
+            <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
+              <h3 class="text-lg font-semibold text-gray-900 shrink-0">All Complaints</h3>
+              <div class="flex flex-col sm:flex-row gap-3 flex-1 lg:justify-end min-w-0">
+              <div class="relative flex-1 sm:max-w-md lg:max-w-md">
                 <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                 <input
                   v-model="searchQuery"
                   type="text"
                   placeholder="Search by ID, name, or description..."
-                  class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1E3A8A] focus:border-transparent outline-none"
+                  class="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1E3A8A] focus:border-transparent outline-none text-sm sm:text-base"
                 />
               </div>
               <button
                 @click="showFilters = !showFilters"
                 :class="[
-                  'flex items-center space-x-2 px-4 py-2 rounded-lg border transition',
+                  'flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border transition shrink-0',
                   showFilters ? 'bg-[#1E3A8A] text-white border-[#1E3A8A]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50',
                 ]"
               >
                 <Filter class="w-4 h-4" />
                 <span>Filters</span>
               </button>
+              </div>
             </div>
 
-            <div v-if="showFilters" class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
-              <div class="flex-1">
+            <div v-if="showFilters" class="flex flex-col gap-4 md:flex-row md:items-end md:flex-wrap p-4 bg-gray-50 rounded-lg">
+              <div class="w-full md:flex-1 md:min-w-[140px]">
                 <label class="block text-sm font-medium text-gray-700 mb-2">Status</label>
-                <select v-model="statusFilter" class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white">
+                <select v-model="statusFilter" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-white text-sm sm:text-base">
                   <option value="All">All Status</option>
                   <option value="Pending">Pending</option>
                   <option value="Under Investigation">Under Investigation</option>
@@ -138,9 +181,9 @@
                   <option value="Rejected">Rejected</option>
                 </select>
               </div>
-              <div class="flex-1">
+              <div class="w-full md:flex-1 md:min-w-[140px]">
                 <label class="block text-sm font-medium text-gray-700 mb-2">Category</label>
-                <select v-model="categoryFilter" class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white">
+                <select v-model="categoryFilter" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-white text-sm sm:text-base">
                   <option value="All">All Categories</option>
                   <option value="Noise">Noise</option>
                   <option value="Theft">Theft</option>
@@ -149,40 +192,40 @@
                   <option value="Others">Others</option>
                 </select>
               </div>
-              <div v-if="hasActiveFilters" class="pt-7">
-                <button @click="clearFilters" class="flex items-center space-x-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition border border-red-200">
+              <div v-if="hasActiveFilters" class="md:self-end">
+                <button @click="clearFilters" class="flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition border border-red-200">
                   <X class="w-4 h-4" />
                   <span>Clear All</span>
                 </button>
               </div>
             </div>
 
-            <div class="flex items-center justify-between text-sm text-gray-600">
+            <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-xs sm:text-sm text-gray-600">
               <span>Showing {{ filteredComplaints.length }} of {{ complaints.length }} complaints</span>
               <span v-if="hasActiveFilters" class="text-[#1E3A8A] font-medium">Filters applied</span>
             </div>
           </div>
 
-          <div class="overflow-x-auto">
-            <table class="w-full">
+          <div class="-mx-4 sm:mx-0 overflow-x-auto sm:rounded-b-2xl">
+            <table class="w-full min-w-[640px] lg:min-w-0">
               <thead class="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">ID</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">Complainant</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">Category</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">Date</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">Status</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">Actions</th>
+                  <th class="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-medium text-gray-600 uppercase">ID</th>
+                  <th class="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-medium text-gray-600 uppercase">Complainant</th>
+                  <th class="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-medium text-gray-600 uppercase">Category</th>
+                  <th class="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-medium text-gray-600 uppercase">Date</th>
+                  <th class="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-medium text-gray-600 uppercase">Status</th>
+                  <th class="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-medium text-gray-600 uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200">
                 <tr v-for="complaint in filteredComplaints" :key="complaint.id" class="hover:bg-gray-50 transition">
-                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ complaint.trackingNumber }}</td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{{ complaint.residentName || "Anonymous" }}</td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{{ complaint.category }}</td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{{ formatDate(complaint.dateSubmitted) }}</td>
-                  <td class="px-6 py-4 whitespace-nowrap"><StatusBadge :status="complaint.status" /></td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm">
+                  <td class="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium text-gray-900">{{ complaint.trackingNumber }}</td>
+                  <td class="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 max-w-[120px] sm:max-w-none truncate sm:whitespace-nowrap">{{ complaint.residentName || "Anonymous" }}</td>
+                  <td class="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{{ complaint.category }}</td>
+                  <td class="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{{ formatDate(complaint.dateSubmitted) }}</td>
+                  <td class="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap"><StatusBadge :status="complaint.status" /></td>
+                  <td class="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-sm">
                     <button @click="router.push(`/admin/complaint/${complaint.id}`)" class="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition" title="View Details">
                       <Eye class="w-4 h-4" />
                     </button>
@@ -197,7 +240,7 @@
                   </td>
                 </tr>
                 <tr v-if="filteredComplaints.length === 0">
-                  <td colspan="6" class="px-6 py-12 text-center text-gray-500">No complaints found</td>
+                  <td colspan="6" class="px-4 sm:px-6 py-12 text-center text-sm text-gray-500">No complaints found</td>
                 </tr>
               </tbody>
             </table>
@@ -303,17 +346,17 @@
           <div class="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
             <h3 class="text-lg font-semibold text-gray-900 mb-4">Notification Settings</h3>
             <div class="space-y-3">
-              <label class="flex items-center space-x-3">
-                <input v-model="settingsForm.notifyEmailNewComplaints" type="checkbox" class="w-5 h-5 text-[#1E3A8A] rounded" />
-                <span class="text-gray-700">Email notifications for new complaints</span>
+              <label class="flex items-start gap-3">
+                <input v-model="settingsForm.notifyEmailNewComplaints" type="checkbox" class="w-5 h-5 mt-0.5 text-[#1E3A8A] rounded shrink-0" />
+                <span class="text-gray-700 text-sm sm:text-base leading-snug">Email notifications for new complaints</span>
               </label>
-              <label class="flex items-center space-x-3">
-                <input v-model="settingsForm.notifySmsUrgentCases" type="checkbox" class="w-5 h-5 text-[#1E3A8A] rounded" />
-                <span class="text-gray-700">SMS notifications for urgent cases</span>
+              <label class="flex items-start gap-3">
+                <input v-model="settingsForm.notifySmsUrgentCases" type="checkbox" class="w-5 h-5 mt-0.5 text-[#1E3A8A] rounded shrink-0" />
+                <span class="text-gray-700 text-sm sm:text-base leading-snug">SMS notifications for urgent cases</span>
               </label>
-              <label class="flex items-center space-x-3">
-                <input v-model="settingsForm.notifyDailySummaryReports" type="checkbox" class="w-5 h-5 text-[#1E3A8A] rounded" />
-                <span class="text-gray-700">Daily summary reports</span>
+              <label class="flex items-start gap-3">
+                <input v-model="settingsForm.notifyDailySummaryReports" type="checkbox" class="w-5 h-5 mt-0.5 text-[#1E3A8A] rounded shrink-0" />
+                <span class="text-gray-700 text-sm sm:text-base leading-snug">Daily summary reports</span>
               </label>
             </div>
           </div>
@@ -469,7 +512,7 @@
               {{ adminUsersError }}
             </div>
             <div v-else class="space-y-2">
-              <div v-for="adminItem in adminUsers" :key="adminItem.id" class="p-3 border border-gray-200 rounded-lg flex items-start justify-between gap-3">
+              <div v-for="adminItem in adminUsers" :key="adminItem.id" class="p-3 border border-gray-200 rounded-lg flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p class="font-medium text-gray-900">
                     {{ adminItem.name }}
@@ -481,7 +524,7 @@
                 <button
                   @click="deleteAdminUser(adminItem)"
                   :disabled="deletingAdminId === adminItem.id || (user ? adminItem.id === user.id : false)"
-                  class="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  class="inline-flex items-center justify-center gap-1 self-start sm:self-auto text-xs text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1.5 rounded-lg hover:bg-red-50"
                 >
                   <Trash2 class="w-3.5 h-3.5" />
                   {{ deletingAdminId === adminItem.id ? "Deleting..." : "Delete" }}
@@ -493,24 +536,25 @@
           <button
             @click="saveSettings"
             :disabled="settingsSaving"
-            class="px-6 py-3 bg-[#15803D] text-white rounded-lg hover:bg-[#15803de6] transition font-medium shadow-lg"
+            class="w-full sm:w-auto px-6 py-3 bg-[#15803D] text-white rounded-lg hover:bg-[#15803de6] transition font-medium shadow-lg"
           >
             {{ settingsSaving ? "Saving..." : "Save Settings" }}
           </button>
         </div>
-      </div>
-    </main>
+      </main>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuth } from "../composables/useAuth";
 import { API_BASE_URL, apiRequest } from "../lib/api";
 import type { Complaint, ComplaintCategory, ComplaintStats, ComplaintStatus } from "../data/mockData";
 import StatusBadge from "../components/StatusBadge.vue";
 import {
+  Menu,
   Building2,
   LayoutDashboard,
   FileText,
@@ -534,6 +578,12 @@ const route = useRoute();
 const { user, logout, setUser } = useAuth();
 
 const activeTab = ref("dashboard");
+const sidebarOpen = ref(false);
+
+const selectTab = (id: string) => {
+  activeTab.value = id;
+  sidebarOpen.value = false;
+};
 const searchQuery = ref("");
 const statusFilter = ref<ComplaintStatus | "All">("All");
 const categoryFilter = ref<ComplaintCategory | "All">("All");
@@ -631,6 +681,12 @@ const newAdminForm = ref({
   passwordConfirmation: "",
 });
 
+function closeSidebarOnDesktop() {
+  if (typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches) {
+    sidebarOpen.value = false;
+  }
+}
+
 onMounted(() => {
   if (!user.value || user.value.role !== "admin") {
     router.push("/admin/login");
@@ -642,6 +698,11 @@ onMounted(() => {
   }
   initializeAccountForm();
   void fetchDashboardData();
+  window.addEventListener("resize", closeSidebarOnDesktop);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("resize", closeSidebarOnDesktop);
 });
 
 watch(activeTab, (tab) => {
