@@ -378,9 +378,12 @@ class ComplaintController extends Controller
         $evidenceMimeTypes = $complaint->evidences->isNotEmpty()
             ? $complaint->evidences
                 ->map(function ($evidence): ?string {
-                    $mime = $evidence->mime_type;
+                    $filename = basename($evidence->original_name ?: 'evidence');
+                    $raw = is_string($evidence->mime_type) && trim($evidence->mime_type) !== ''
+                        ? strtolower(trim($evidence->mime_type))
+                        : 'application/octet-stream';
 
-                    return is_string($mime) && trim($mime) !== '' ? strtolower(trim($mime)) : null;
+                    return $this->coerceEvidenceContentType($raw, $filename);
                 })
                 ->values()
                 ->all()
@@ -874,13 +877,19 @@ class ComplaintController extends Controller
      */
     private function coerceEvidenceContentType(string $mime, string $filename): string
     {
-        $mimeNorm = strtolower($mime);
+        $mimeNorm = strtolower(trim($mime));
+        $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+
+        // iPhone HEIC is often mis-detected as image/jpeg; trust file extension when present.
+        if (in_array($ext, ['heic', 'heif'], true)) {
+            return $ext === 'heif' ? 'image/heif' : 'image/heic';
+        }
 
         if ($mimeNorm !== 'application/octet-stream' && $mimeNorm !== '') {
             return $mime;
         }
 
-        return match (strtolower(pathinfo($filename, PATHINFO_EXTENSION))) {
+        return match ($ext) {
             'heic' => 'image/heic',
             'heif' => 'image/heif',
             'jpg', 'jpeg', 'jfif' => 'image/jpeg',

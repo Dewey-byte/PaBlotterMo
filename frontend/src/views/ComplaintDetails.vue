@@ -156,6 +156,16 @@
                     >
                       View uploaded file
                     </a>
+                    <p class="mt-2 text-xs text-gray-600">
+                      <a
+                        :href="resolveEvidenceUrl(complaint, index)"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="font-medium text-[#1E3A8A] hover:underline"
+                      >
+                        Open in new tab
+                      </a>
+                    </p>
                   </div>
                 </div>
               </div>
@@ -253,9 +263,22 @@ watch(
 );
 
 const availableEvidencePaths = computed(() => {
-  const paths = complaint.value?.evidencePaths ?? [];
+  const c = complaint.value;
+  if (!c) return [];
+
+  const paths = (c.evidencePaths ?? []).filter((p) => String(p ?? "").trim() !== "");
   if (paths.length > 0) return paths;
-  return complaint.value?.evidencePath ? [complaint.value.evidencePath] : [];
+
+  const fromUrls = c.evidenceUrls?.length ?? 0;
+  const fromMimes = c.evidenceMimeTypes?.length ?? 0;
+  const legacy = c.evidenceUrl || c.evidencePath ? 1 : 0;
+  const n = Math.max(fromUrls, fromMimes, legacy);
+
+  if (n > 0) {
+    return Array.from({ length: n }, (_, i) => `attachment-${i + 1}`);
+  }
+
+  return c.evidencePath ? [c.evidencePath] : [];
 });
 
 const evidenceMimeAt = (index: number) => complaint.value?.evidenceMimeTypes?.[index] ?? null;
@@ -287,10 +310,16 @@ const isHeicFamilyEvidence = (pathHint: string, mime?: string | null) => {
   return mu === "" || mu === "application/octet-stream" || mu.startsWith("image/");
 };
 
+/** Chromium and most browsers only decode these inline; broad `image/*` breaks on HEIC mislabeled as JPEG, TIFF, etc. */
 const supportsInlineImgPreview = (pathHint: string, mime?: string | null) => {
   if (isHeicFamilyEvidence(pathHint, mime)) return false;
-  const mu = (mime ?? "").toLowerCase();
-  if (mu.startsWith("image/")) return true;
+  const mu = ((mime ?? "") as string).toLowerCase().split(";")[0].trim();
+  if (mu) {
+    const safeMime = new Set(["image/jpeg", "image/jpg", "image/pjpeg", "image/png", "image/gif", "image/webp"]);
+    if (mu.startsWith("image/")) {
+      return safeMime.has(mu);
+    }
+  }
   const ext = evidenceFileExtension(pathHint);
   return ["jpg", "jpeg", "jfif", "png", "gif", "webp"].includes(ext);
 };
@@ -344,12 +373,25 @@ const toAbsoluteUrl = (value: string) => {
 };
 
 const resolveEvidenceUrl = (currentComplaint: Complaint, index: number) => {
-  if (currentComplaint.evidenceUrls?.[index]) {
-    return currentComplaint.evidenceUrls[index];
+  const direct = currentComplaint.evidenceUrls?.[index];
+  if (direct && (direct.startsWith("http://") || direct.startsWith("https://"))) {
+    return direct;
+  }
+
+  const id = currentComplaint.id;
+  if (typeof id === "number" && !Number.isNaN(id)) {
+    const base = API_BASE_URL.replace(/\/$/, "");
+    return `${base}/complaints/${id}/evidence/${index}`;
+  }
+
+  if (direct) {
+    return toAbsoluteUrl(direct);
   }
 
   if (index === 0 && currentComplaint.evidenceUrl) {
-    return currentComplaint.evidenceUrl;
+    return currentComplaint.evidenceUrl.startsWith("http")
+      ? currentComplaint.evidenceUrl
+      : toAbsoluteUrl(currentComplaint.evidenceUrl);
   }
 
   const evidencePath = currentComplaint.evidencePaths?.[index];
