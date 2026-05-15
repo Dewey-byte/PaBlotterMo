@@ -200,7 +200,7 @@ class ComplaintController extends Controller
         return response()->json($this->transformComplaint($complaint));
     }
 
-    public function evidence(Complaint $complaint, int $index = 0): BinaryFileResponse|JsonResponse|StreamedResponse
+    public function evidence(Request $request, Complaint $complaint, int $index = 0): BinaryFileResponse|JsonResponse|StreamedResponse
     {
         if ($complaint->evidences()->exists()) {
             $attachment = $complaint->evidences()->orderBy('sort_order')->skip($index)->first();
@@ -213,6 +213,11 @@ class ComplaintController extends Controller
             $mime = $attachment->mime_type ?: 'application/octet-stream';
             $filename = basename($attachment->original_name) ?: 'evidence';
             $mime = $this->coerceEvidenceContentType($mime, $filename);
+
+            $preview = $this->tryHeicJpegPreviewResponse($request, $mime, (string) $attachment->file_data, $filename);
+            if ($preview !== null) {
+                return $preview;
+            }
 
             return response()->stream(function () use ($attachment): void {
                 echo $attachment->file_data;
@@ -248,6 +253,16 @@ class ComplaintController extends Controller
             $mime = $disk->mimeType($key) ?? 'application/octet-stream';
             $mime = $this->coerceEvidenceContentType($mime, $filename);
 
+            if ($this->wantsHeicPreview($request, $mime)) {
+                $binary = @file_get_contents($absolutePath);
+                if (is_string($binary) && $binary !== '') {
+                    $preview = $this->tryHeicJpegPreviewResponse($request, $mime, $binary, $filename);
+                    if ($preview !== null) {
+                        return $preview;
+                    }
+                }
+            }
+
             return response()->file($absolutePath, [
                 'Content-Type' => $mime,
                 'Content-Disposition' => 'inline; filename="'.$filename.'"',
@@ -263,6 +278,17 @@ class ComplaintController extends Controller
         $mime = $disk->mimeType($key) ?? 'application/octet-stream';
         $filename = basename($key);
         $mime = $this->coerceEvidenceContentType($mime, $filename);
+
+        $preview = null;
+        if ($this->wantsHeicPreview($request, $mime)) {
+            $binary = $disk->get($key);
+            if (is_string($binary) && $binary !== '') {
+                $preview = $this->tryHeicJpegPreviewResponse($request, $mime, $binary, $filename);
+            }
+        }
+        if ($preview !== null) {
+            return $preview;
+        }
 
         return response()->stream(function () use ($disk, $key): void {
             $stream = $disk->readStream($key);
@@ -370,7 +396,7 @@ class ComplaintController extends Controller
         $count = count($evidencePaths);
         $evidenceUrls = $count > 0
             ? array_map(
-                fn (int $i): string => secure_url("/api/complaints/{$complaint->id}/evidence/{$i}"),
+                fn (int $i): string => url("/api/complaints/{$complaint->id}/evidence/{$i}"),
                 range(0, $count - 1)
             )
             : [];
@@ -378,12 +404,9 @@ class ComplaintController extends Controller
         $evidenceMimeTypes = $complaint->evidences->isNotEmpty()
             ? $complaint->evidences
                 ->map(function ($evidence): ?string {
-                    $filename = basename($evidence->original_name ?: 'evidence');
-                    $raw = is_string($evidence->mime_type) && trim($evidence->mime_type) !== ''
-                        ? strtolower(trim($evidence->mime_type))
-                        : 'application/octet-stream';
+                    $mime = $evidence->mime_type;
 
-                    return $this->coerceEvidenceContentType($raw, $filename);
+                    return is_string($mime) && trim($mime) !== '' ? strtolower(trim($mime)) : null;
                 })
                 ->values()
                 ->all()
@@ -873,23 +896,97 @@ class ComplaintController extends Controller
     }
 
     /**
+     * When ?preview=1 is set and the file is HEIC/HEIF, attempt on-the-fly JPEG for admin inline display.
+     * Requires PHP Imagick with HEIF/libheif delegates; returns null when conversion is unavailable.
+     */
+    private function wantsHeicPreview(Request $request, string $mime): bool
+    {
+        if (! $request->boolean('preview')) {
+            return false;
+        }
+
+        return $this->isHeicFamilyMime($mime);
+    }
+
+    private function isHeicFamilyMime(string $mime): bool
+    {
+        $m = strtolower(trim($mime));
+
+        return $m === 'image/heic'
+            || $m === 'image/heif'
+            || str_contains($m, 'heic')
+            || str_contains($m, 'heif');
+    }
+
+    private function tryHeicJpegPreviewResponse(Request $request, string $mime, string $binary, string $filename): ?StreamedResponse
+    {
+        if (! $this->wantsHeicPreview($request, $mime)) {
+            return null;
+        }
+
+        $jpeg = $this->convertHeicBlobToJpegIfPossible($binary);
+        if ($jpeg === null || $jpeg === '') {
+            return null;
+        }
+
+        $previewName = pathinfo($filename, PATHINFO_FILENAME);
+        $previewName = ($previewName !== '' ? $previewName : 'evidence').'-preview.jpg';
+
+        return response()->stream(function () use ($jpeg): void {
+            echo $jpeg;
+        }, 200, [
+            'Content-Type' => 'image/jpeg',
+            'Content-Disposition' => 'inline; filename="'.$previewName.'"',
+            'Cache-Control' => 'private, max-age=86400',
+        ]);
+    }
+
+    private function convertHeicBlobToJpegIfPossible(string $blob): ?string
+    {
+        if ($blob === '') {
+            return null;
+        }
+
+        if (! extension_loaded('imagick')) {
+            return null;
+        }
+
+        try {
+            $im = new \Imagick;
+            $im->readImageBlob($blob);
+            $im->setImageFormat('jpeg');
+            $im->setImageCompressionQuality(88);
+            $im->stripImage();
+            $out = $im->getImageBlob();
+            $im->clear();
+            $im->destroy();
+
+            if (! is_string($out) || $out === '') {
+                return null;
+            }
+
+            return $out;
+        } catch (Throwable $e) {
+            Log::info('HEIC→JPEG preview skipped (Imagick cannot decode or HEIF missing).', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
      * iPhone uploads may be stored as application/octet-stream; map known extensions so clients get a useful Content-Type.
      */
     private function coerceEvidenceContentType(string $mime, string $filename): string
     {
-        $mimeNorm = strtolower(trim($mime));
-        $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-
-        // iPhone HEIC is often mis-detected as image/jpeg; trust file extension when present.
-        if (in_array($ext, ['heic', 'heif'], true)) {
-            return $ext === 'heif' ? 'image/heif' : 'image/heic';
-        }
+        $mimeNorm = strtolower($mime);
 
         if ($mimeNorm !== 'application/octet-stream' && $mimeNorm !== '') {
             return $mime;
         }
 
-        return match ($ext) {
+        return match (strtolower(pathinfo($filename, PATHINFO_EXTENSION))) {
             'heic' => 'image/heic',
             'heif' => 'image/heif',
             'jpg', 'jpeg', 'jfif' => 'image/jpeg',

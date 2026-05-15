@@ -92,22 +92,42 @@
                       alt="Resident evidence"
                       class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white"
                     />
-                    <div
-                      v-else-if="isHeicFamilyEvidence(evidencePath, evidenceMimeAt(index))"
-                      class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
-                    >
-                      <p class="mb-2">
-                        Preview is not supported in this browser for this file type (HEIC/HEIF). Open or download the file to
-                        view it.
-                      </p>
-                      <a
-                        :href="resolveEvidenceUrl(complaint, index)"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="font-medium text-[#1E3A8A] hover:underline"
+                    <div v-else-if="isHeicFamilyEvidence(evidencePath, evidenceMimeAt(index))" class="space-y-2">
+                      <template v-if="!heicPreviewFailed[index]">
+                        <img
+                          :src="resolveEvidencePreviewUrl(complaint, index)"
+                          alt="Resident evidence (JPEG preview)"
+                          class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white"
+                          @error="markHeicPreviewFailed(index)"
+                        />
+                        <p class="text-xs text-gray-600">
+                          Server-generated JPEG preview for HEIC/HEIF when PHP Imagick supports it.
+                          <a
+                            :href="resolveEvidenceUrl(complaint, index)"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="font-medium text-[#1E3A8A] hover:underline"
+                          >
+                            Open original
+                          </a>
+                        </p>
+                      </template>
+                      <div
+                        v-else
+                        class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
                       >
-                        Open / download
-                      </a>
+                        <p class="mb-2">
+                          No JPEG preview available (install Imagick with HEIF, or open the original file).
+                        </p>
+                        <a
+                          :href="resolveEvidenceUrl(complaint, index)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="font-medium text-[#1E3A8A] hover:underline"
+                        >
+                          Open / download
+                        </a>
+                      </div>
                     </div>
                     <div v-else-if="looksLikeVideoEvidence(evidencePath, evidenceMimeAt(index))" class="space-y-2">
                       <video
@@ -254,11 +274,13 @@ const notificationMessage = ref("");
 const notificationSent = ref<boolean | null>(null);
 const loadingComplaint = ref(true);
 const videoPlaybackFailed = ref<Record<number, boolean>>({});
+const heicPreviewFailed = ref<Record<number, boolean>>({});
 
 watch(
   () => complaint.value?.id,
   () => {
     videoPlaybackFailed.value = {};
+    heicPreviewFailed.value = {};
   },
 );
 
@@ -335,6 +357,10 @@ const markVideoPlaybackFailed = (index: number) => {
   videoPlaybackFailed.value = { ...videoPlaybackFailed.value, [index]: true };
 };
 
+const markHeicPreviewFailed = (index: number) => {
+  heicPreviewFailed.value = { ...heicPreviewFailed.value, [index]: true };
+};
+
 const fetchComplaint = async () => {
   const id = route.params.id;
   if (!id) {
@@ -400,6 +426,12 @@ const resolveEvidenceUrl = (currentComplaint: Complaint, index: number) => {
   }
 
   return index === 0 && currentComplaint.evidencePath ? toAbsoluteUrl(currentComplaint.evidencePath) : "";
+};
+
+const resolveEvidencePreviewUrl = (currentComplaint: Complaint, index: number) => {
+  const base = resolveEvidenceUrl(currentComplaint, index);
+  if (!base) return "";
+  return base.includes("?") ? `${base}&preview=1` : `${base}?preview=1`;
 };
 
 const handleUpdate = async () => {
