@@ -83,33 +83,48 @@
                   <ImageIcon class="w-4 h-4" />
                   <span>Resident Evidence ({{ availableEvidencePaths.length }})</span>
                 </label>
+                <p v-if="evidenceActionError" class="mb-2 text-sm text-red-600">{{ evidenceActionError }}</p>
                 <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 space-y-4">
                   <div v-for="(evidencePath, index) in availableEvidencePaths" :key="`${evidencePath}-${index}`">
                     <p class="text-xs text-gray-500 mb-2">Attachment {{ index + 1 }}</p>
-                    <img
-                      v-if="supportsInlineImgPreview(evidencePath, evidenceMimeAt(index))"
-                      :src="resolveEvidenceUrl(complaint, index)"
-                      alt="Resident evidence"
-                      class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white"
-                    />
+                    <div v-if="supportsInlineImgPreview(evidencePath, evidenceMimeAt(index))">
+                      <div
+                        v-if="!evidenceBlobUrls[index]"
+                        class="min-h-[10rem] flex items-center justify-center rounded-lg border border-gray-200 bg-white text-sm text-gray-500"
+                      >
+                        Loading preview…
+                      </div>
+                      <img
+                        v-else
+                        :src="evidenceBlobUrls[index]"
+                        alt="Resident evidence"
+                        class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white"
+                      />
+                    </div>
                     <div v-else-if="isHeicFamilyEvidence(evidencePath, evidenceMimeAt(index))" class="space-y-2">
                       <template v-if="!heicPreviewFailed[index]">
+                        <div
+                          v-if="!evidenceBlobUrls[index]"
+                          class="min-h-[10rem] flex items-center justify-center rounded-lg border border-gray-200 bg-white text-sm text-gray-500"
+                        >
+                          Loading preview…
+                        </div>
                         <img
-                          :src="resolveEvidencePreviewUrl(complaint, index)"
+                          v-else
+                          :src="evidenceBlobUrls[index]"
                           alt="Resident evidence (JPEG preview)"
                           class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white"
                           @error="markHeicPreviewFailed(index)"
                         />
                         <p class="text-xs text-gray-600">
                           Server-generated JPEG preview for HEIC/HEIF when PHP Imagick supports it.
-                          <a
-                            :href="resolveEvidenceUrl(complaint, index)"
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <button
+                            type="button"
                             class="font-medium text-[#1E3A8A] hover:underline"
+                            @click="openEvidenceExternally(index)"
                           >
                             Open original
-                          </a>
+                          </button>
                         </p>
                       </template>
                       <div
@@ -119,20 +134,25 @@
                         <p class="mb-2">
                           No JPEG preview available (install Imagick with HEIF, or open the original file).
                         </p>
-                        <a
-                          :href="resolveEvidenceUrl(complaint, index)"
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
                           class="font-medium text-[#1E3A8A] hover:underline"
+                          @click="openEvidenceExternally(index)"
                         >
                           Open / download
-                        </a>
+                        </button>
                       </div>
                     </div>
                     <div v-else-if="looksLikeVideoEvidence(evidencePath, evidenceMimeAt(index))" class="space-y-2">
+                      <div
+                        v-if="!evidenceBlobUrls[index]"
+                        class="min-h-[10rem] flex items-center justify-center rounded-lg border border-gray-200 bg-white text-sm text-gray-500"
+                      >
+                        Loading preview…
+                      </div>
                       <video
-                        v-show="!videoPlaybackFailed[index]"
-                        :src="resolveEvidenceUrl(complaint, index)"
+                        v-show="!videoPlaybackFailed[index] && !!evidenceBlobUrls[index]"
+                        :src="evidenceBlobUrls[index] ?? ''"
                         controls
                         playsinline
                         class="max-h-80 rounded-lg border border-gray-200 object-contain bg-white w-full"
@@ -146,45 +166,48 @@
                           Inline playback isn’t supported for this clip in your browser (for example some iPhone MOV/HEVC). Open
                           it in a new tab or download it instead.
                         </p>
-                        <a
-                          :href="resolveEvidenceUrl(complaint, index)"
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
                           class="font-medium text-[#1E3A8A] hover:underline"
+                          @click="openEvidenceExternally(index)"
                         >
                           Open in new tab
-                        </a>
+                        </button>
                       </div>
                       <p v-else class="text-xs text-gray-600">
-                        <a
-                          :href="resolveEvidenceUrl(complaint, index)"
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
                           class="font-medium text-[#1E3A8A] hover:underline"
+                          @click="openEvidenceExternally(index)"
                         >
                           Open in new tab
-                        </a>
+                        </button>
                         <span class="text-gray-500"> — use if playback fails</span>
                       </p>
                     </div>
-                    <a
+                    <button
                       v-else
-                      :href="resolveEvidenceUrl(complaint, index)"
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      type="button"
                       class="inline-flex items-center text-[#1E3A8A] hover:underline font-medium"
+                      @click="openEvidenceExternally(index)"
                     >
                       View uploaded file
-                    </a>
-                    <p class="mt-2 text-xs text-gray-600">
-                      <a
-                        :href="resolveEvidenceUrl(complaint, index)"
-                        target="_blank"
-                        rel="noopener noreferrer"
+                    </button>
+                    <p
+                      v-if="
+                        !supportsInlineImgPreview(evidencePath, evidenceMimeAt(index)) &&
+                        !isHeicFamilyEvidence(evidencePath, evidenceMimeAt(index)) &&
+                        !looksLikeVideoEvidence(evidencePath, evidenceMimeAt(index))
+                      "
+                      class="mt-2 text-xs text-gray-600"
+                    >
+                      <button
+                        type="button"
                         class="font-medium text-[#1E3A8A] hover:underline"
+                        @click="openEvidenceExternally(index)"
                       >
                         Open in new tab
-                      </a>
+                      </button>
                     </p>
                   </div>
                 </div>
@@ -209,9 +232,13 @@
             <textarea
               v-model="adminNotes"
               rows="6"
+              maxlength="5000"
               class="w-full px-4 py-3 border border-gray-300 rounded-lg resize-none"
               placeholder="Add notes about this complaint..."
             />
+            <p class="mt-2 text-xs text-slate-500">
+              Admin notes are included in the email or SMS sent to the complainant when you click Update Complaint.
+            </p>
           </div>
 
           <div v-if="updateSuccess" class="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
@@ -244,10 +271,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuth } from "../composables/useAuth";
-import { API_BASE_URL, apiRequest } from "../lib/api";
+import { API_BASE_URL, apiRequest, fetchAuthenticatedObjectUrl } from "../lib/api";
 import type { Complaint, ComplaintStatus } from "../data/mockData";
 import StatusBadge from "../components/StatusBadge.vue";
 import { ArrowLeft, User, Phone, Calendar, Tag, FileText, Save, Image as ImageIcon } from "lucide-vue-next";
@@ -275,14 +302,97 @@ const notificationSent = ref<boolean | null>(null);
 const loadingComplaint = ref(true);
 const videoPlaybackFailed = ref<Record<number, boolean>>({});
 const heicPreviewFailed = ref<Record<number, boolean>>({});
+const evidenceBlobUrls = ref<Record<number, string>>({});
+const evidenceActionError = ref("");
+
+function revokeAllEvidenceBlobs(): void {
+  Object.values(evidenceBlobUrls.value).forEach((url) => URL.revokeObjectURL(url));
+  evidenceBlobUrls.value = {};
+}
+
+function needsAuthenticatedBlob(pathHint: string, mime?: string | null): boolean {
+  return (
+    supportsInlineImgPreview(pathHint, mime) ||
+    isHeicFamilyEvidence(pathHint, mime) ||
+    looksLikeVideoEvidence(pathHint, mime)
+  );
+}
+
+async function hydrateEvidenceBlobs(): Promise<void> {
+  const c = complaint.value;
+  if (!c) {
+    return;
+  }
+
+  const paths = availableEvidencePaths.value;
+  const blobEntries = await Promise.all(
+    paths.map(async (pathHint, index) => {
+      const mime = evidenceMimeAt(index);
+      if (!needsAuthenticatedBlob(pathHint, mime)) {
+        return null;
+      }
+
+      try {
+        const sourceUrl = isHeicFamilyEvidence(pathHint, mime)
+          ? resolveEvidencePreviewUrl(c, index)
+          : resolveEvidenceUrl(c, index);
+        if (!sourceUrl) {
+          return null;
+        }
+        const blobUrl = await fetchAuthenticatedObjectUrl(sourceUrl);
+        return [index, blobUrl] as const;
+      } catch {
+        /* Inline preview unavailable; user can still try Open via authenticated fetch. */
+        return null;
+      }
+    }),
+  );
+
+  const next: Record<number, string> = {};
+  for (const entry of blobEntries) {
+    if (entry) {
+      next[entry[0]] = entry[1];
+    }
+  }
+
+  revokeAllEvidenceBlobs();
+  evidenceBlobUrls.value = next;
+}
+
+async function openEvidenceExternally(index: number): Promise<void> {
+  evidenceActionError.value = "";
+  const c = complaint.value;
+  if (!c) {
+    return;
+  }
+  const url = resolveEvidenceUrl(c, index);
+  if (!url) {
+    evidenceActionError.value = "No download URL for this attachment.";
+    return;
+  }
+  try {
+    const blobUrl = await fetchAuthenticatedObjectUrl(url);
+    window.open(blobUrl, "_blank", "noopener,noreferrer");
+  } catch (err) {
+    evidenceActionError.value = err instanceof Error ? err.message : "Could not open attachment.";
+  }
+}
 
 watch(
   () => complaint.value?.id,
-  () => {
+  async () => {
     videoPlaybackFailed.value = {};
     heicPreviewFailed.value = {};
+    revokeAllEvidenceBlobs();
+    if (complaint.value?.id != null) {
+      await hydrateEvidenceBlobs();
+    }
   },
 );
+
+onBeforeUnmount(() => {
+  revokeAllEvidenceBlobs();
+});
 
 const availableEvidencePaths = computed(() => {
   const c = complaint.value;
@@ -465,11 +575,12 @@ const handleUpdate = async () => {
     notificationSent.value = response.notificationSent;
 
     if (response.notificationSent === true) {
-      notificationMessage.value = "Complainant was notified using their selected contact method.";
+      notificationMessage.value =
+        "The complainant has been duly notified through their registered contact channel.";
     } else if (response.notificationSent === false) {
       notificationMessage.value = response.notificationReason
-        ? `Status updated, but notification failed: ${response.notificationReason}`
-        : "Status updated, but notification delivery failed. Check SMS/email configuration.";
+        ? `The status was recorded; however, notification could not be delivered. ${response.notificationReason}`
+        : "The status was recorded; however, notification could not be delivered. Please verify the email or SMS configuration.";
     }
   } catch (err) {
     updateError.value = err instanceof Error ? err.message : "Failed to update complaint.";

@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\BarangaySetting;
+use App\Services\TransactionalEmailService;
+use App\Support\ComplaintNotificationTemplates;
 use App\Models\Complaint;
 use App\Models\ComplaintEvidence;
 use App\Models\User;
@@ -50,10 +52,57 @@ class ComplaintController extends Controller
             }
         }
 
-        $complaints = $query
+        $perPage = min(max((int) $request->integer('per_page', 15), 1), 50);
+
+        $paginator = $query
+            ->select([
+                'id',
+                'tracking_number',
+                'resident_name',
+                'contact_method',
+                'contact_value',
+                'contact_number',
+                'category',
+                'description',
+                'status',
+                'date_submitted',
+                'assigned_officer',
+                'admin_notes',
+                'created_at',
+                'updated_at',
+            ])
             ->latest('date_submitted')
+            ->paginate($perPage)
+            ->through(fn (Complaint $complaint) => $this->transformComplaintSummary($complaint));
+
+        return response()->json($paginator);
+    }
+
+    public function recent(Request $request): JsonResponse
+    {
+        $limit = min(max((int) $request->integer('limit', 5), 1), 20);
+
+        $complaints = Complaint::query()
+            ->select([
+                'id',
+                'tracking_number',
+                'resident_name',
+                'contact_method',
+                'contact_value',
+                'contact_number',
+                'category',
+                'description',
+                'status',
+                'date_submitted',
+                'assigned_officer',
+                'admin_notes',
+                'created_at',
+                'updated_at',
+            ])
+            ->latest('date_submitted')
+            ->limit($limit)
             ->get()
-            ->map(fn (Complaint $complaint) => $this->transformComplaint($complaint));
+            ->map(fn (Complaint $complaint) => $this->transformComplaintSummary($complaint));
 
         return response()->json($complaints);
     }
@@ -71,7 +120,7 @@ class ComplaintController extends Controller
                 'contactMethod' => ['required', Rule::in($this->allowedContactMethods())],
                 'contactValue' => ['required', 'string', 'max:255'],
                 'category' => ['required', Rule::in($this->allowedCategories())],
-                'description' => ['required', 'string'],
+                'description' => ['required', 'string', 'min:10', 'max:5000'],
                 'evidence' => ['nullable', 'array', 'max:5'],
                 'evidence.*' => $this->evidenceAttachmentRules(),
             ]
@@ -197,6 +246,12 @@ class ComplaintController extends Controller
 
     public function show(Complaint $complaint): JsonResponse
     {
+        $complaint->load([
+            'evidences' => static function ($q): void {
+                $q->select(['id', 'complaint_id', 'sort_order', 'original_name', 'mime_type']);
+            },
+        ]);
+
         return response()->json($this->transformComplaint($complaint));
     }
 
@@ -317,6 +372,12 @@ class ComplaintController extends Controller
             ], 404);
         }
 
+        $complaint->load([
+            'evidences' => static function ($q): void {
+                $q->select(['id', 'complaint_id', 'sort_order', 'original_name', 'mime_type']);
+            },
+        ]);
+
         return response()->json($this->transformComplaint($complaint));
     }
 
@@ -324,11 +385,12 @@ class ComplaintController extends Controller
     {
         $validated = $request->validate([
             'status' => ['sometimes', Rule::in($this->allowedStatuses())],
-            'adminNotes' => ['sometimes', 'nullable', 'string'],
+            'adminNotes' => ['sometimes', 'nullable', 'string', 'max:5000'],
             'assignedOfficer' => ['sometimes', 'nullable', 'string', 'max:255'],
         ]);
 
         $originalStatus = $complaint->status;
+        $originalNotes = trim((string) ($complaint->admin_notes ?? ''));
 
         $complaint->fill([
             'status' => $validated['status'] ?? $complaint->status,
@@ -336,27 +398,42 @@ class ComplaintController extends Controller
             'assigned_officer' => array_key_exists('assignedOfficer', $validated) ? $validated['assignedOfficer'] : $complaint->assigned_officer,
         ]);
         $complaint->save();
+        $complaint->refresh();
+        $complaint->load([
+            'evidences' => static function ($q): void {
+                $q->select(['id', 'complaint_id', 'sort_order', 'original_name', 'mime_type']);
+            },
+        ]);
 
         $statusChanged = $originalStatus !== $complaint->status;
+        $adminNotesForNotification = trim((string) ($complaint->admin_notes ?? ''));
+        $notesChanged = $originalNotes !== $adminNotesForNotification;
+        $shouldNotifyComplainant = $statusChanged || ($notesChanged && $adminNotesForNotification !== '');
+
         $notificationSent = true;
         $notificationReason = null;
 
-        if ($statusChanged) {
-            $notificationResult = $this->notifyComplainantStatusUpdate($complaint, $originalStatus);
+        if ($shouldNotifyComplainant) {
+            $notificationResult = $this->notifyComplainantStatusUpdate(
+                $complaint,
+                $originalStatus,
+                $adminNotesForNotification,
+                $statusChanged,
+            );
             $notificationSent = $notificationResult['sent'];
             $notificationReason = $notificationResult['reason'];
         }
 
-        $message = 'Complaint updated successfully.';
-        if ($statusChanged && ! $notificationSent) {
-            $message .= ' Status was updated, but notification could not be sent.';
+        $message = 'The complaint record has been updated successfully.';
+        if ($shouldNotifyComplainant && ! $notificationSent) {
+            $message .= ' However, the complainant could not be notified at this time.';
         }
 
         return response()->json([
             'message' => $message,
             'complaint' => $this->transformComplaint($complaint),
-            'notificationSent' => $statusChanged ? $notificationSent : null,
-            'notificationReason' => $statusChanged ? $notificationReason : null,
+            'notificationSent' => $shouldNotifyComplainant ? $notificationSent : null,
+            'notificationReason' => $shouldNotifyComplainant ? $notificationReason : null,
         ]);
     }
 
@@ -381,13 +458,46 @@ class ComplaintController extends Controller
 
     public function stats(): JsonResponse
     {
+        $row = Complaint::query()
+            ->selectRaw('COUNT(*) as total')
+            ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as pending', [Complaint::STATUS_PENDING])
+            ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as investigating', [Complaint::STATUS_UNDER_INVESTIGATION])
+            ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as resolved', [Complaint::STATUS_RESOLVED])
+            ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as rejected', [Complaint::STATUS_REJECTED])
+            ->first();
+
         return response()->json([
-            'total' => Complaint::query()->count(),
-            'pending' => Complaint::query()->where('status', Complaint::STATUS_PENDING)->count(),
-            'investigating' => Complaint::query()->where('status', Complaint::STATUS_UNDER_INVESTIGATION)->count(),
-            'resolved' => Complaint::query()->where('status', Complaint::STATUS_RESOLVED)->count(),
-            'rejected' => Complaint::query()->where('status', Complaint::STATUS_REJECTED)->count(),
+            'total' => (int) ($row->total ?? 0),
+            'pending' => (int) ($row->pending ?? 0),
+            'investigating' => (int) ($row->investigating ?? 0),
+            'resolved' => (int) ($row->resolved ?? 0),
+            'rejected' => (int) ($row->rejected ?? 0),
         ]);
+    }
+
+    /**
+     * Lightweight payload for admin list and dashboard widgets (no evidence metadata).
+     *
+     * @return array<string, mixed>
+     */
+    private function transformComplaintSummary(Complaint $complaint): array
+    {
+        return [
+            'id' => $complaint->id,
+            'trackingNumber' => $this->utf8JsonString($complaint->tracking_number),
+            'residentName' => $this->utf8JsonString($complaint->resident_name),
+            'contactMethod' => $this->utf8JsonString($complaint->contact_method) ?? Complaint::CONTACT_METHOD_PHONE,
+            'contactValue' => $this->utf8JsonString($complaint->contact_value ?? $complaint->contact_number),
+            'contactNumber' => $this->utf8JsonString($complaint->contact_value ?? $complaint->contact_number),
+            'category' => $this->utf8JsonString($complaint->category),
+            'description' => $this->utf8JsonString($complaint->description),
+            'status' => $this->utf8JsonString($complaint->status),
+            'dateSubmitted' => optional($complaint->date_submitted)->toDateString(),
+            'assignedOfficer' => $this->utf8JsonString($complaint->assigned_officer),
+            'adminNotes' => $this->utf8JsonString($complaint->admin_notes),
+            'createdAt' => $complaint->created_at?->toIso8601String(),
+            'updatedAt' => $complaint->updated_at?->toIso8601String(),
+        ];
     }
 
     private function transformComplaint(Complaint $complaint): array
@@ -536,8 +646,12 @@ class ComplaintController extends Controller
     /**
      * @return array{sent: bool, reason: string|null}
      */
-    private function notifyComplainantStatusUpdate(Complaint $complaint, string $previousStatus): array
-    {
+    private function notifyComplainantStatusUpdate(
+        Complaint $complaint,
+        string $previousStatus,
+        string $adminNotes,
+        bool $statusChanged = true,
+    ): array {
         $contactMethod = $complaint->contact_method ?? Complaint::CONTACT_METHOD_PHONE;
         $contactValue = $complaint->contact_value ?? $complaint->contact_number;
 
@@ -548,24 +662,32 @@ class ComplaintController extends Controller
             ];
         }
 
-        $message = implode("\n", [
-            'Dear Concerned Resident,',
-            '',
-            "This is to inform you that the status of your complaint ({$complaint->tracking_number}) has been updated.",
-            "Previous status: {$previousStatus}",
-            "Current status: {$complaint->status}",
-            '',
-            $complaint->admin_notes
-                ? "Administrative notes: {$complaint->admin_notes}"
-                : 'No additional notes were provided at this time.',
-            '',
-            'Thank you for your patience and cooperation.',
-            'Barangay Complaint Management Team',
-        ]);
+        $settings = BarangaySetting::query()->first();
+        $barangayName = ComplaintNotificationTemplates::barangayName($settings);
 
         return match ($contactMethod) {
-            Complaint::CONTACT_METHOD_EMAIL => $this->sendStatusUpdateEmail($contactValue, $message, $complaint),
-            Complaint::CONTACT_METHOD_PHONE => $this->sendStatusUpdateSms($contactValue, $message),
+            Complaint::CONTACT_METHOD_EMAIL => $this->sendStatusUpdateEmail(
+                $contactValue,
+                ComplaintNotificationTemplates::residentStatusEmailSubject($complaint),
+                ComplaintNotificationTemplates::residentStatusEmailBody(
+                    $complaint,
+                    $previousStatus,
+                    $barangayName,
+                    $adminNotes,
+                    $statusChanged,
+                ),
+                $complaint,
+            ),
+            Complaint::CONTACT_METHOD_PHONE => $this->sendStatusUpdateSms(
+                $contactValue,
+                ComplaintNotificationTemplates::residentStatusSmsBody(
+                    $complaint,
+                    $previousStatus,
+                    $barangayName,
+                    $adminNotes,
+                    $statusChanged,
+                ),
+            ),
             default => [
                 'sent' => false,
                 'reason' => 'Unsupported contact method.',
@@ -597,31 +719,23 @@ class ComplaintController extends Controller
             $excerpt = Str::limit(trim(strip_tags((string) $complaint->description)), 280);
 
             $baseUrl = rtrim((string) (env('APP_URL') ?: config('app.url')), '/');
-            $adminHint = $baseUrl !== '' ? "{$baseUrl}/admin" : 'Open the PaBlotterMo admin dashboard.';
+            $adminHint = $baseUrl !== ''
+                ? "{$baseUrl}/admin"
+                : 'Please access the PaBlotterMo administrative dashboard through your authorized link.';
 
-            $barangayLabel = trim((string) $settings->barangay_name) !== ''
-                ? $settings->barangay_name
-                : 'Your barangay';
+            $barangayLabel = ComplaintNotificationTemplates::barangayName($settings);
 
-            $body = implode("\n", [
-                'A new complaint was submitted through PaBlotterMo.',
-                '',
-                "Tracking number: {$complaint->tracking_number}",
-                "Category: {$complaint->category}",
-                'Contact channel used by resident: '.$contactChannel,
-                '',
-                'Description (excerpt):',
-                $excerpt !== '' ? $excerpt : '(none)',
-                '',
-                'Review this complaint in the admin dashboard:',
+            $body = ComplaintNotificationTemplates::adminNewComplaintBody(
+                $complaint,
+                $contactChannel,
+                $excerpt,
                 $adminHint,
-                '',
-                '— '.$barangayLabel.' (automated notice)',
-            ]);
+                $barangayLabel,
+            );
 
-            $subject = "New complaint: {$complaint->tracking_number} ({$complaint->category})";
+            $subject = ComplaintNotificationTemplates::adminNewComplaintSubject($complaint);
 
-            $result = $this->sendResendEmails($recipients, $subject, $body, [
+            $result = $this->sendTransactionalEmails($recipients, $subject, $body, [
                 'complaint_id' => $complaint->id,
                 'context' => 'new_complaint_admin_notice',
             ]);
@@ -672,55 +786,15 @@ class ComplaintController extends Controller
      * @param  array<string, mixed>  $logContext
      * @return array{sent: bool, reason: string|null}
      */
-    private function sendResendEmails(array $toAddresses, string $subject, string $textBody, array $logContext = []): array
+    private function sendTransactionalEmails(array $toAddresses, string $subject, string $textBody, array $logContext = []): array
     {
-        $apiKey = (string) env('RESEND_API_KEY', '');
-        $fromAddress = (string) env('RESEND_FROM_EMAIL', 'onboarding@resend.dev');
-
-        if ($apiKey === '' || str_contains($apiKey, 'your_resend_api_key')) {
-            return [
-                'sent' => false,
-                'reason' => 'Resend email provider is not configured.',
-            ];
-        }
-
-        try {
-            Http::withToken($apiKey)
-                ->acceptJson()
-                ->post('https://api.resend.com/emails', [
-                    'from' => $fromAddress,
-                    'to' => array_values($toAddresses),
-                    'subject' => $subject,
-                    'text' => $textBody,
-                ])
-                ->throw();
-
-            return [
-                'sent' => true,
-                'reason' => null,
-            ];
-        } catch (RequestException $exception) {
-            Log::error('Resend email request failed.', array_merge($logContext, [
-                'subject' => $subject,
-                'status' => optional($exception->response)->status(),
-                'body' => optional($exception->response)->body(),
-                'error' => $exception->getMessage(),
-            ]));
-
-            $providerMessage = trim($exception->getMessage());
-            $providerMessage = $providerMessage !== '' ? " Provider said: {$providerMessage}" : '';
-
-            return [
-                'sent' => false,
-                'reason' => "Email provider rejected the message.{$providerMessage}",
-            ];
-        }
+        return app(TransactionalEmailService::class)->send($toAddresses, $subject, $textBody, $logContext);
     }
 
     /**
      * @return array{sent: bool, reason: string|null}
      */
-    private function sendStatusUpdateEmail(string $emailAddress, string $message, Complaint $complaint): array
+    private function sendStatusUpdateEmail(string $emailAddress, string $subject, string $message, Complaint $complaint): array
     {
         if (! filter_var($emailAddress, FILTER_VALIDATE_EMAIL)) {
             return [
@@ -729,9 +803,9 @@ class ComplaintController extends Controller
             ];
         }
 
-        return $this->sendResendEmails(
+        return $this->sendTransactionalEmails(
             [$emailAddress],
-            "Official Complaint Status Update - {$complaint->tracking_number}",
+            $subject,
             $message,
             [
                 'complaint_id' => $complaint->id,

@@ -9,7 +9,7 @@
     <aside
       :class="[
         'w-64 max-w-[min(100vw-3rem,16rem)] bg-gradient-to-b from-[#1E3A8A] to-[#1D4ED8] text-white flex flex-col shadow-2xl',
-        'fixed inset-y-0 left-0 z-50 h-screen overflow-y-auto transition-transform duration-200 ease-out lg:static lg:z-auto lg:h-screen lg:max-w-none lg:translate-x-0 lg:shrink-0',
+        'fixed inset-y-0 left-0 z-50 h-screen overflow-y-auto transition-transform duration-200 ease-out lg:sticky lg:top-0 lg:self-start lg:z-auto lg:h-screen lg:max-h-screen lg:max-w-none lg:translate-x-0 lg:shrink-0',
         sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
       ]"
     >
@@ -144,6 +144,8 @@
         </template>
 
         <div v-else-if="activeTab === 'complaints'" class="bg-white rounded-2xl shadow-lg border border-slate-100 overflow-hidden">
+          <div v-if="complaintsLoading" class="px-4 py-12 sm:px-6 text-center text-gray-600">Loading complaints...</div>
+          <template v-else>
           <div class="px-4 py-4 sm:px-6 border-b border-gray-200 space-y-4">
             <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
               <h3 class="text-lg font-semibold text-gray-900 shrink-0">All Complaints</h3>
@@ -201,7 +203,7 @@
             </div>
 
             <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-xs sm:text-sm text-gray-600">
-              <span>Showing {{ filteredComplaints.length }} of {{ complaints.length }} complaints</span>
+              <span>{{ complaintsRangeLabel }}</span>
               <span v-if="hasActiveFilters" class="text-[#1E3A8A] font-medium">Filters applied</span>
             </div>
           </div>
@@ -219,7 +221,7 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200">
-                <tr v-for="complaint in filteredComplaints" :key="complaint.id" class="hover:bg-gray-50 transition">
+                <tr v-for="complaint in complaints" :key="complaint.id" class="hover:bg-gray-50 transition">
                   <td class="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium text-gray-900">{{ complaint.trackingNumber }}</td>
                   <td class="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 max-w-[120px] sm:max-w-none truncate sm:whitespace-nowrap">{{ complaint.residentName || "Anonymous" }}</td>
                   <td class="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{{ complaint.category }}</td>
@@ -239,26 +241,58 @@
                     </button>
                   </td>
                 </tr>
-                <tr v-if="filteredComplaints.length === 0">
+                <tr v-if="complaints.length === 0">
                   <td colspan="6" class="px-4 sm:px-6 py-12 text-center text-sm text-gray-500">No complaints found</td>
                 </tr>
               </tbody>
             </table>
           </div>
+
+          <div
+            v-if="complaintsTotal > 0"
+            class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 py-4 sm:px-6 border-t border-gray-200"
+          >
+            <p class="text-xs sm:text-sm text-gray-600">
+              Page {{ complaintsPage }} of {{ complaintsLastPage }}
+            </p>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="px-3 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="complaintsPage <= 1 || complaintsLoading"
+                @click="goToComplaintsPage(complaintsPage - 1)"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                class="px-3 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="complaintsPage >= complaintsLastPage || complaintsLoading"
+                @click="goToComplaintsPage(complaintsPage + 1)"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+          </template>
         </div>
 
         <div v-else-if="activeTab === 'reports'" class="space-y-6">
-          <div v-if="reportsLoading" class="text-gray-600">Loading report data...</div>
+          <div v-if="reportsLoading && !reportData" class="text-gray-600">Loading report data...</div>
           <div v-if="reportsError" class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
             {{ reportsError }}
           </div>
 
-          <template v-if="reportData">
+          <template v-if="reportData || reportsStatusFromStats">
+            <p v-if="reportData?.generatedAt" class="text-xs text-gray-500">
+              Generated {{ formatReportTime(reportData.generatedAt) }}
+            </p>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div class="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
                 <h3 class="text-lg font-semibold text-gray-900 mb-4">Complaints by Category</h3>
+                <p v-if="reportsLoading && !reportData?.byCategory?.length" class="text-sm text-gray-500 mb-3">Loading categories…</p>
                 <div class="space-y-3">
-                  <div v-for="row in reportData.byCategory" :key="row.category">
+                  <div v-for="row in (reportData?.byCategory ?? [])" :key="row.category">
                     <div class="flex justify-between text-sm mb-1">
                       <span class="text-gray-700">{{ row.category }}</span>
                       <span class="font-medium text-gray-900">{{ row.count }}</span>
@@ -275,19 +309,19 @@
                 <div class="space-y-4">
                   <div class="flex items-center justify-between p-4 bg-yellow-50 rounded-lg">
                     <span class="text-gray-700">Pending</span>
-                    <span class="text-2xl font-bold text-yellow-600">{{ reportData.statusOverview.pending }}</span>
+                    <span class="text-2xl font-bold text-yellow-600">{{ reportsStatusFromStats.pending }}</span>
                   </div>
                   <div class="flex items-center justify-between p-4 bg-blue-50 rounded-lg">
                     <span class="text-gray-700">Under Investigation</span>
-                    <span class="text-2xl font-bold text-blue-600">{{ reportData.statusOverview.investigating }}</span>
+                    <span class="text-2xl font-bold text-blue-600">{{ reportsStatusFromStats.investigating }}</span>
                   </div>
                   <div class="flex items-center justify-between p-4 bg-green-50 rounded-lg">
                     <span class="text-gray-700">Resolved</span>
-                    <span class="text-2xl font-bold text-green-600">{{ reportData.statusOverview.resolved }}</span>
+                    <span class="text-2xl font-bold text-green-600">{{ reportsStatusFromStats.resolved }}</span>
                   </div>
                   <div class="flex items-center justify-between p-4 bg-red-50 rounded-lg">
                     <span class="text-gray-700">Rejected</span>
-                    <span class="text-2xl font-bold text-red-600">{{ reportData.statusOverview.rejected }}</span>
+                    <span class="text-2xl font-bold text-red-600">{{ reportsStatusFromStats.rejected }}</span>
                   </div>
                 </div>
               </div>
@@ -616,6 +650,25 @@ const showAccountConfirmPassword = ref(false);
 const showNewAdminPassword = ref(false);
 const showNewAdminConfirmPassword = ref(false);
 const complaints = ref<Complaint[]>([]);
+const recentComplaints = ref<Complaint[]>([]);
+const complaintsLoaded = ref(false);
+const complaintsLoading = ref(false);
+const complaintsPage = ref(1);
+const complaintsPerPage = 15;
+const complaintsTotal = ref(0);
+const complaintsLastPage = ref(1);
+const complaintsFrom = ref(0);
+const complaintsTo = ref(0);
+
+interface ComplaintsPaginatedResponse {
+  data: Complaint[];
+  current_page: number;
+  last_page: number;
+  per_page: number;
+  total: number;
+  from: number | null;
+  to: number | null;
+}
 const stats = ref<ComplaintStats>({
   total: 0,
   pending: 0,
@@ -701,16 +754,27 @@ onMounted(() => {
   }
   initializeAccountForm();
   void fetchDashboardData();
+  void fetchReportsData();
+  if (activeTab.value === "complaints") {
+    void fetchComplaints();
+  }
   window.addEventListener("resize", closeSidebarOnDesktop);
 });
 
 onUnmounted(() => {
   window.removeEventListener("resize", closeSidebarOnDesktop);
+  if (complaintsSearchTimer) {
+    clearTimeout(complaintsSearchTimer);
+  }
 });
 
 watch(activeTab, (tab) => {
+  if (tab === "complaints" && !complaintsLoaded.value && !complaintsLoading.value) {
+    void fetchComplaints();
+  }
+
   if (tab === "reports" && !reportData.value && !reportsLoading.value) {
-    void fetchReportsData();
+    void fetchReportsData(true);
   }
 
   if (tab === "settings" && !settingsForm.value.barangayName && !settingsLoading.value) {
@@ -737,21 +801,30 @@ const activeDescription = computed(() => {
   return "Configure system settings and preferences";
 });
 
-const filteredComplaints = computed(() =>
-  complaints.value.filter((complaint) => {
-    const query = searchQuery.value.toLowerCase();
-    const matchesSearch =
-      query === "" ||
-      complaint.trackingNumber.toLowerCase().includes(query) ||
-      complaint.residentName.toLowerCase().includes(query) ||
-      complaint.description.toLowerCase().includes(query);
-    const matchesStatus = statusFilter.value === "All" || complaint.status === statusFilter.value;
-    const matchesCategory = categoryFilter.value === "All" || complaint.category === categoryFilter.value;
-    return matchesSearch && matchesStatus && matchesCategory;
-  }),
-);
+const reportsStatusFromStats = computed(() => {
+  if (reportData.value?.statusOverview) {
+    return reportData.value.statusOverview;
+  }
 
-const recentComplaints = computed(() => complaints.value.slice(0, 5));
+  return {
+    pending: stats.value.pending,
+    investigating: stats.value.investigating,
+    resolved: stats.value.resolved,
+    rejected: stats.value.rejected,
+  };
+});
+
+const complaintsRangeLabel = computed(() => {
+  if (complaintsTotal.value === 0) {
+    return "No complaints found";
+  }
+
+  if (complaintsFrom.value > 0 && complaintsTo.value > 0) {
+    return `Showing ${complaintsFrom.value}–${complaintsTo.value} of ${complaintsTotal.value} complaints`;
+  }
+
+  return `Showing ${complaints.value.length} of ${complaintsTotal.value} complaints`;
+});
 
 const hasActiveFilters = computed(
   () => searchQuery.value !== "" || statusFilter.value !== "All" || categoryFilter.value !== "All",
@@ -761,10 +834,45 @@ const clearFilters = () => {
   searchQuery.value = "";
   statusFilter.value = "All";
   categoryFilter.value = "All";
+  complaintsPage.value = 1;
+  if (complaintsLoaded.value) {
+    void fetchComplaints();
+  }
 };
 
-const handleLogout = () => {
-  logout();
+const goToComplaintsPage = (page: number) => {
+  if (page < 1 || page > complaintsLastPage.value || page === complaintsPage.value) {
+    return;
+  }
+  complaintsPage.value = page;
+  void fetchComplaints();
+};
+
+let complaintsSearchTimer: ReturnType<typeof setTimeout> | undefined;
+
+watch([statusFilter, categoryFilter], () => {
+  if (!complaintsLoaded.value) {
+    return;
+  }
+  complaintsPage.value = 1;
+  void fetchComplaints();
+});
+
+watch(searchQuery, () => {
+  if (!complaintsLoaded.value) {
+    return;
+  }
+  complaintsPage.value = 1;
+  if (complaintsSearchTimer) {
+    clearTimeout(complaintsSearchTimer);
+  }
+  complaintsSearchTimer = setTimeout(() => {
+    void fetchComplaints();
+  }, 350);
+});
+
+const handleLogout = async () => {
+  await logout();
   router.push("/admin/login");
 };
 
@@ -781,20 +889,77 @@ const fetchDashboardData = async () => {
   loadError.value = "";
 
   try {
-    const [complaintsResponse, statsResponse] = await Promise.all([
-      apiRequest<Complaint[]>("/complaints"),
+    const [statsResponse, recentResponse] = await Promise.all([
       apiRequest<ComplaintStats>("/complaints/stats"),
+      apiRequest<Complaint[]>("/complaints/recent?limit=5"),
     ]);
-    complaints.value = complaintsResponse;
     stats.value = statsResponse;
+    recentComplaints.value = recentResponse;
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : "Failed to load complaints.";
+    loadError.value = err instanceof Error ? err.message : "Failed to load dashboard data.";
   } finally {
     loading.value = false;
   }
 };
 
-const fetchReportsData = async () => {
+const buildComplaintsQuery = () => {
+  const params = new URLSearchParams({
+    page: String(complaintsPage.value),
+    per_page: String(complaintsPerPage),
+  });
+
+  const search = searchQuery.value.trim();
+  if (search) {
+    params.set("search", search);
+  }
+  if (statusFilter.value !== "All") {
+    params.set("status", statusFilter.value);
+  }
+  if (categoryFilter.value !== "All") {
+    params.set("category", categoryFilter.value);
+  }
+
+  return params.toString();
+};
+
+const fetchComplaints = async () => {
+  complaintsLoading.value = true;
+  loadError.value = "";
+
+  try {
+    const response = await apiRequest<ComplaintsPaginatedResponse>(`/complaints?${buildComplaintsQuery()}`);
+    complaints.value = response.data;
+    complaintsPage.value = response.current_page;
+    complaintsLastPage.value = Math.max(response.last_page, 1);
+    complaintsTotal.value = response.total;
+    complaintsFrom.value = response.from ?? 0;
+    complaintsTo.value = response.to ?? 0;
+    complaintsLoaded.value = true;
+  } catch (err) {
+    loadError.value = err instanceof Error ? err.message : "Failed to load complaints.";
+  } finally {
+    complaintsLoading.value = false;
+  }
+};
+
+const refreshStatsAndRecent = async () => {
+  try {
+    const [statsResponse, recentResponse] = await Promise.all([
+      apiRequest<ComplaintStats>("/complaints/stats"),
+      apiRequest<Complaint[]>("/complaints/recent?limit=5"),
+    ]);
+    stats.value = statsResponse;
+    recentComplaints.value = recentResponse;
+  } catch {
+    // Keep existing dashboard values if a background refresh fails.
+  }
+};
+
+const fetchReportsData = async (force = false) => {
+  if (reportData.value && !force) {
+    return;
+  }
+
   reportsLoading.value = true;
   reportsError.value = "";
 
@@ -965,8 +1130,14 @@ const deleteComplaint = async (complaintItem: Complaint) => {
     await apiRequest<{ message: string }>(`/complaints/${complaintItem.id}`, {
       method: "DELETE",
     });
-    complaints.value = complaints.value.filter((item) => item.id !== complaintItem.id);
-    await fetchDashboardData();
+    recentComplaints.value = recentComplaints.value.filter((item) => item.id !== complaintItem.id);
+    await refreshStatsAndRecent();
+    if (complaintsLoaded.value) {
+      if (complaints.value.length === 1 && complaintsPage.value > 1) {
+        complaintsPage.value -= 1;
+      }
+      await fetchComplaints();
+    }
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : "Failed to delete complaint.";
   } finally {
@@ -983,5 +1154,14 @@ const formatDate = (date: string) =>
     year: "numeric",
     month: "short",
     day: "numeric",
+  });
+
+const formatReportTime = (iso: string) =>
+  new Date(iso).toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   });
 </script>

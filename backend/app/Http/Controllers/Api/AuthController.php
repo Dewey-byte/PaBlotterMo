@@ -5,12 +5,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\AdminPasswordOtp;
 use App\Models\User;
-use Illuminate\Http\Client\RequestException;
+use App\Services\TransactionalEmailService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Throwable;
 
 class AuthController extends Controller
@@ -36,8 +36,11 @@ class AuthController extends Controller
             ], 403);
         }
 
+        $token = $user->createToken('admin-session')->plainTextToken;
+
         return response()->json([
             'message' => 'Login successful.',
+            'token' => $token,
             'user' => [
                 'id' => $user->id,
                 'name' => $user->name,
@@ -45,6 +48,18 @@ class AuthController extends Controller
                 'role' => $user->role,
                 'contactNumber' => $user->contact_number,
             ],
+        ]);
+    }
+
+    public function logout(Request $request): JsonResponse
+    {
+        $token = $request->user()?->currentAccessToken();
+        if ($token) {
+            $token->delete();
+        }
+
+        return response()->json([
+            'message' => 'Logged out successfully.',
         ]);
     }
 
@@ -71,10 +86,19 @@ class AuthController extends Controller
             ->latest()
             ->first();
 
-        if ($latestOtp && $latestOtp->created_at && now()->diffInSeconds($latestOtp->created_at) < $this->otpResendCooldownSeconds()) {
+        if (
+            $latestOtp
+            && $latestOtp->created_at
+            && $latestOtp->created_at->isAfter(now()->subSeconds($this->otpResendCooldownSeconds()))
+        ) {
             return response()->json([
                 'message' => 'Please wait before requesting another OTP.',
             ], 429);
+        }
+
+        if ($latestOtp && $latestOtp->expires_at && $latestOtp->expires_at->isPast()) {
+            $latestOtp->update(['used_at' => now()]);
+            $latestOtp = null;
         }
 
         $plainOtp = (string) random_int(100000, 999999);
@@ -171,18 +195,6 @@ class AuthController extends Controller
 
     private function sendOtpEmail(string $emailAddress, string $otp): string
     {
-        $apiKey = (string) env('RESEND_API_KEY', '');
-        $fromAddress = (string) env('RESEND_FROM_EMAIL', 'onboarding@resend.dev');
-
-        if ($apiKey === '' || str_contains($apiKey, 'your_resend_api_key')) {
-            Log::info('OTP email fallback (Resend not configured for real delivery).', [
-                'to' => $emailAddress,
-                'otp' => $otp,
-            ]);
-
-            return 'fallback';
-        }
-
         $message = implode("\n", [
             'Dear Administrator,',
             '',
@@ -195,28 +207,28 @@ class AuthController extends Controller
             'PaBlotterMo System Administration',
         ]);
 
-        try {
-            Http::withToken($apiKey)
-                ->acceptJson()
-                ->post('https://api.resend.com/emails', [
-                    'from' => $fromAddress,
-                    'to' => [$emailAddress],
-                    'subject' => 'Official OTP for Admin Password Reset',
-                    'text' => $message,
-                ])
-                ->throw();
+        $result = app(TransactionalEmailService::class)->send(
+            [$emailAddress],
+            'Official OTP for Admin Password Reset',
+            $message,
+            ['context' => 'admin_password_otp', 'to' => $emailAddress],
+        );
 
+        if ($result['sent']) {
             return 'sent';
-        } catch (RequestException $exception) {
-            Log::error('OTP email sending failed.', [
+        }
+
+        if ($this->canExposeOtpForTesting()) {
+            Log::info('OTP email fallback (no working mail provider).', [
                 'to' => $emailAddress,
-                'status' => optional($exception->response)->status(),
-                'body' => optional($exception->response)->body(),
-                'error' => $exception->getMessage(),
+                'otp' => $otp,
+                'reason' => $result['reason'],
             ]);
 
-            throw $exception;
+            return 'fallback';
         }
+
+        throw new RuntimeException($result['reason'] ?? 'Failed to send OTP email.');
     }
 
     private function canExposeOtpForTesting(): bool

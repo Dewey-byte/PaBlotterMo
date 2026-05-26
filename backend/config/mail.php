@@ -39,7 +39,11 @@ return [
 
         'smtp' => [
             'transport' => 'smtp',
-            'scheme' => env('MAIL_SCHEME'),
+            // Laravel accepts "smtp" (STARTTLS, e.g. port 587) or "smtps" (SSL, e.g. 465).
+            // Map legacy MAIL_SCHEME=tls/ssl from older .env examples.
+            'scheme' => in_array(strtolower((string) env('MAIL_SCHEME', 'smtp')), ['smtps', 'ssl'], true)
+                ? 'smtps'
+                : 'smtp',
             'url' => env('MAIL_URL'),
             'host' => env('MAIL_HOST', '127.0.0.1'),
             'port' => env('MAIL_PORT', 2525),

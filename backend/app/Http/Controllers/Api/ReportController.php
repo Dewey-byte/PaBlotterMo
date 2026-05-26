@@ -22,10 +22,26 @@ class ReportController extends Controller
             Complaint::CATEGORY_OTHERS,
         ];
 
-        $total = Complaint::query()->count();
+        $query = Complaint::query()->selectRaw('COUNT(*) as total');
 
-        $byCategory = collect($categories)->map(function (string $category) use ($total): array {
-            $count = Complaint::query()->where('category', $category)->count();
+        $query->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as status_pending', [Complaint::STATUS_PENDING]);
+        $query->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as status_investigating', [Complaint::STATUS_UNDER_INVESTIGATION]);
+        $query->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as status_resolved', [Complaint::STATUS_RESOLVED]);
+        $query->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as status_rejected', [Complaint::STATUS_REJECTED]);
+
+        foreach ($categories as $category) {
+            $query->selectRaw(
+                'SUM(CASE WHEN category = ? THEN 1 ELSE 0 END) as '.$this->categoryAggregateColumn($category),
+                [$category]
+            );
+        }
+
+        $row = $query->first();
+        $total = (int) ($row->total ?? 0);
+
+        $byCategory = collect($categories)->map(function (string $category) use ($row, $total): array {
+            $column = $this->categoryAggregateColumn($category);
+            $count = (int) ($row->{$column} ?? 0);
 
             return [
                 'category' => $category,
@@ -35,10 +51,10 @@ class ReportController extends Controller
         })->values();
 
         $statusOverview = [
-            'pending' => Complaint::query()->where('status', Complaint::STATUS_PENDING)->count(),
-            'investigating' => Complaint::query()->where('status', Complaint::STATUS_UNDER_INVESTIGATION)->count(),
-            'resolved' => Complaint::query()->where('status', Complaint::STATUS_RESOLVED)->count(),
-            'rejected' => Complaint::query()->where('status', Complaint::STATUS_REJECTED)->count(),
+            'pending' => (int) ($row->status_pending ?? 0),
+            'investigating' => (int) ($row->status_investigating ?? 0),
+            'resolved' => (int) ($row->status_resolved ?? 0),
+            'rejected' => (int) ($row->status_rejected ?? 0),
         ];
 
         return response()->json([
@@ -61,18 +77,22 @@ class ReportController extends Controller
         };
     }
 
+    private function categoryAggregateColumn(string $category): string
+    {
+        return 'category_'.Str::snake($category);
+    }
+
     private function exportCsv(): StreamedResponse
     {
         $fileName = 'complaints-report-'.now()->format('Ymd-His').'.csv';
-        $rows = $this->reportRows();
 
-        return response()->streamDownload(function () use ($rows): void {
+        return response()->streamDownload(function (): void {
             $output = fopen('php://output', 'w');
             fputcsv($output, ['Tracking Number', 'Complainant', 'Contact', 'Category', 'Status', 'Date Submitted']);
 
-            foreach ($rows as $row) {
+            $this->streamReportRows(function (array $row) use ($output): void {
                 fputcsv($output, $row);
-            }
+            });
 
             fclose($output);
         }, $fileName, [
@@ -83,20 +103,19 @@ class ReportController extends Controller
     private function exportExcel(): StreamedResponse
     {
         $fileName = 'complaints-report-'.now()->format('Ymd-His').'.xls';
-        $rows = $this->reportRows();
 
-        return response()->streamDownload(function () use ($rows): void {
+        return response()->streamDownload(function (): void {
             echo '<table border="1"><thead><tr>';
             echo '<th>Tracking Number</th><th>Complainant</th><th>Contact</th><th>Category</th><th>Status</th><th>Date Submitted</th>';
             echo '</tr></thead><tbody>';
 
-            foreach ($rows as $row) {
+            $this->streamReportRows(function (array $row): void {
                 echo '<tr>';
                 foreach ($row as $cell) {
                     echo '<td>'.e((string) $cell).'</td>';
                 }
                 echo '</tr>';
-            }
+            });
 
             echo '</tbody></table>';
         }, $fileName, [
@@ -134,19 +153,42 @@ class ReportController extends Controller
      */
     private function reportRows(): array
     {
-        return Complaint::query()
+        $rows = [];
+
+        $this->streamReportRows(function (array $row) use (&$rows): void {
+            $rows[] = $row;
+        });
+
+        return $rows;
+    }
+
+    /**
+     * @param  callable(array<int, string>): void  $emit
+     */
+    private function streamReportRows(callable $emit): void
+    {
+        Complaint::query()
+            ->select([
+                'tracking_number',
+                'resident_name',
+                'contact_value',
+                'contact_number',
+                'category',
+                'status',
+                'date_submitted',
+            ])
             ->latest('date_submitted')
-            ->get()
-            ->map(function (Complaint $complaint): array {
-                return [
-                    $complaint->tracking_number,
-                    $complaint->resident_name ?: 'Anonymous',
-                    $complaint->contact_value ?? $complaint->contact_number,
-                    $complaint->category,
-                    $complaint->status,
-                    optional($complaint->date_submitted)->toDateString() ?? '',
-                ];
-            })
-            ->all();
+            ->chunkById(200, function ($complaints) use ($emit): void {
+                foreach ($complaints as $complaint) {
+                    $emit([
+                        $complaint->tracking_number,
+                        $complaint->resident_name ?: 'Anonymous',
+                        $complaint->contact_value ?? $complaint->contact_number,
+                        $complaint->category,
+                        $complaint->status,
+                        optional($complaint->date_submitted)->toDateString() ?? '',
+                    ]);
+                }
+            });
     }
 }

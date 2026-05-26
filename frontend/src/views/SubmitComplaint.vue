@@ -154,11 +154,13 @@
                 id="description"
                 v-model="formData.description"
                 rows="5"
+                maxlength="5000"
                 class="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1E3A8A] focus:border-transparent outline-none transition resize-none"
                 placeholder="Describe your complaint in detail..."
                 required
               />
             </div>
+            <p class="text-xs text-gray-500 mt-1">{{ formData.description.trim().length }} / 5000 characters (minimum 10)</p>
           </div>
 
           <div>
@@ -269,15 +271,52 @@ const handleSubmit = async () => {
     return;
   }
 
+  const trimmedContact = formData.contactValue.trim();
+  const trimmedDescription = formData.description.trim();
+
+  if (trimmedDescription.length < 10) {
+    submitError.value = "Please enter at least 10 characters describing your complaint.";
+    return;
+  }
+
+  if (trimmedDescription.length > 5000) {
+    submitError.value = "Description must be at most 5000 characters.";
+    return;
+  }
+
+  if (!trimmedContact) {
+    submitError.value = formData.contactMethod === "phone" ? "Please enter your phone number." : "Please enter your email address.";
+    return;
+  }
+
+  if (formData.contactMethod === "email") {
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(trimmedContact)) {
+      submitError.value = "Please enter a valid email address.";
+      return;
+    }
+  } else {
+    const phonePattern = /^[0-9+\-\s()]{7,20}$/;
+    if (!phonePattern.test(trimmedContact)) {
+      submitError.value = "Please enter a valid phone number (7–20 digits or common separators).";
+      return;
+    }
+  }
+
+  if (!formData.category) {
+    submitError.value = "Please select a complaint category.";
+    return;
+  }
+
   isSubmitting.value = true;
   submitError.value = "";
 
   try {
     const payload = new FormData();
     payload.append("contactMethod", formData.contactMethod);
-    payload.append("contactValue", formData.contactValue);
+    payload.append("contactValue", trimmedContact);
     payload.append("category", formData.category);
-    payload.append("description", formData.description);
+    payload.append("description", trimmedDescription);
     selectedFiles.value.forEach((file, index) => {
       payload.append(`evidence[${index}]`, file);
     });

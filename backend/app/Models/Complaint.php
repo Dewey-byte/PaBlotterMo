@@ -25,7 +25,6 @@ class Complaint extends Model
 
     protected $fillable = [
         'tracking_number',
-        'resident_name',
         'contact_number',
         'contact_method',
         'contact_value',
